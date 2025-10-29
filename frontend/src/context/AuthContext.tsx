@@ -1,0 +1,103 @@
+// src/context/AuthContext.tsx
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { User, login as authLogin, logout as authLogout, getCurrentUser, getAuthToken, clearAuthToken } from '../lib/auth';
+
+interface AuthContextType {
+  user: User | null;
+  accessToken: string | null;
+  isLoading: boolean;
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  isAuthenticated: boolean;
+  isOrganizer: boolean;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export function AuthProvider({ children }: AuthProviderProps) {
+  const [user, setUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const isAuthenticated = !!accessToken && !!user;
+  const isOrganizer = !!accessToken; // Any authenticated user can be an organizer
+
+  // Initialize auth state on app load
+  useEffect(() => {
+    const initializeAuth = async () => {
+      const token = getAuthToken();
+      
+      if (token) {
+        try {
+          const userData = await getCurrentUser();
+          setUser(userData);
+          setAccessToken(token);
+        } catch (error) {
+          console.warn('Failed to restore auth state:', error);
+          clearAuthToken();
+        }
+      }
+      
+      setIsLoading(false);
+    };
+
+    initializeAuth();
+  }, []);
+
+  const login = async (username: string, password: string) => {
+    try {
+      setIsLoading(true);
+      const response = await authLogin(username, password);
+      setAccessToken(response.access);
+      
+      // Fetch user data
+      const userData = await getCurrentUser();
+      setUser(userData);
+    } catch (error) {
+      clearAuthToken();
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await authLogout();
+    } catch (error) {
+      console.warn('Logout error:', error);
+    } finally {
+      setUser(null);
+      setAccessToken(null);
+      clearAuthToken();
+    }
+  };
+
+  const value: AuthContextType = {
+    user,
+    accessToken,
+    isLoading,
+    login,
+    logout,
+    isAuthenticated,
+    isOrganizer,
+  };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth(): AuthContextType {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}
