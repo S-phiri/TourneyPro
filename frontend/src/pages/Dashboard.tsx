@@ -108,9 +108,14 @@ const Dashboard: React.FC = () => {
             </div>
             <h3 className="text-xl font-medium text-gray-900 mb-2">No tournaments yet</h3>
             <p className="text-gray-500 mb-6">Create your first tournament to get started!</p>
-            <Link to="/start-hosting" className="btn-primary">
-              Create Tournament
-            </Link>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Link to="/host/new" className="btn-primary">
+                Create Competition (Wizard)
+              </Link>
+              <Link to="/start-hosting" className="btn-outline">
+                Quick Create (Advanced)
+              </Link>
+            </div>
           </div>
         </div>
       ) : (
@@ -127,9 +132,14 @@ const Dashboard: React.FC = () => {
 
           {/* Create New Tournament Button */}
           <div className="text-center">
-            <Link to="/start-hosting" className="btn-primary">
-              Create New Tournament
-            </Link>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Link to="/host/new" className="btn-primary">
+                Create Competition (Wizard)
+              </Link>
+              <Link to="/start-hosting" className="btn-outline">
+                Quick Create (Advanced)
+              </Link>
+            </div>
           </div>
         </>
       )}

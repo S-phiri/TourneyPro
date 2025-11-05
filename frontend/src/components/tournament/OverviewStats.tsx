@@ -1,114 +1,82 @@
-import React, { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, useInView, useMotionValue, useSpring } from "framer-motion";
+import { Users, Trophy, Calendar, DollarSign } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 interface OverviewStatsProps {
-  teamsCount: number;
-  matchesPlayed: number;
-  upcomingMatches: number;
-  entryFee: string | number;
+  teamsCount?: number;
+  matchesPlayed?: number;
+  upcomingMatches?: number;
+  entryFee?: string;
 }
 
-const OverviewStats: React.FC<OverviewStatsProps> = ({
-  teamsCount,
-  matchesPlayed,
-  upcomingMatches,
-  entryFee,
-}) => {
-  const formatCurrency = (amount: string | number) => {
-    const numAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
-    return `R${numAmount.toFixed(0)}`;
-  };
+function AnimatedNumber({ value }: { value: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const motionValue = useMotionValue(0);
+  const springValue = useSpring(motionValue, { duration: 2000 });
+  const isInView = useInView(ref, { once: true });
 
-  const Counter = ({ value }: { value: number }) => {
-    const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (isInView) {
+      motionValue.set(value);
+    }
+  }, [isInView, value, motionValue]);
 
-    useEffect(() => {
-      const duration = 1500;
-      const steps = 60;
-      const increment = value / steps;
-      const stepDuration = duration / steps;
+  useEffect(() => {
+    springValue.on("change", (latest) => {
+      if (ref.current) {
+        ref.current.textContent = Math.floor(latest).toString();
+      }
+    });
+  }, [springValue]);
 
-      let currentStep = 0;
-      const timer = setInterval(() => {
-        currentStep++;
-        setCount(Math.min(Math.ceil(increment * currentStep), value));
+  return <span ref={ref}>0</span>;
+}
 
-        if (currentStep >= steps) {
-          clearInterval(timer);
-          setCount(value);
-        }
-      }, stepDuration);
-
-      return () => clearInterval(timer);
-    }, [value]);
-
-    return <span className="text-4xl font-bold text-gray-900">{count}</span>;
-  };
-
+export default function OverviewStats({
+  teamsCount = 16,
+  matchesPlayed = 24,
+  upcomingMatches = 8,
+  entryFee = "R2500"
+}: OverviewStatsProps) {
   const stats = [
-    {
-      icon: '👥',
-      label: 'Teams Registered',
-      value: teamsCount,
-      component: <Counter value={teamsCount} />,
-      color: 'from-blue-500/10 to-blue-600/20',
-      borderColor: 'border-blue-500/30',
-    },
-    {
-      icon: '⚽',
-      label: 'Matches Played',
-      value: matchesPlayed,
-      component: <Counter value={matchesPlayed} />,
-      color: 'from-green-500/10 to-green-600/20',
-      borderColor: 'border-green-500/30',
-    },
-    {
-      icon: '📅',
-      label: 'Upcoming Matches',
-      value: upcomingMatches,
-      component: <Counter value={upcomingMatches} />,
-      color: 'from-yellow-500/10 to-yellow-600/20',
-      borderColor: 'border-yellow-500/30',
-    },
-    {
-      icon: '💰',
-      label: 'Entry Fee',
-      value: entryFee,
-      component: <span className="text-4xl font-bold text-green-600">{formatCurrency(entryFee)}</span>,
-      color: 'from-purple-500/10 to-purple-600/20',
-      borderColor: 'border-purple-500/30',
-    },
+    { icon: Users, label: "Teams Registered", value: teamsCount, isNumber: true },
+    { icon: Trophy, label: "Matches Played", value: matchesPlayed, isNumber: true },
+    { icon: Calendar, label: "Upcoming Matches", value: upcomingMatches, isNumber: true },
+    { icon: DollarSign, label: "Entry Fee", value: entryFee, isNumber: false }
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      {stats.map((stat, index) => (
-        <motion.div
-          key={index}
-          className={`card border-2 ${stat.borderColor} bg-gradient-to-br ${stat.color} relative overflow-hidden`}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: index * 0.1, duration: 0.5 }}
-          whileHover={{ scale: 1.05, y: -5 }}
-        >
-          {/* Glow effect on hover */}
+    <div className="container mx-auto px-6 py-16">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {stats.map((stat, index) => (
           <motion.div
-            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent"
-            initial={{ x: '-100%' }}
-            whileHover={{ x: '100%' }}
-            transition={{ duration: 0.5 }}
-          />
-          
-          <div className="relative z-10">
-            <div className="text-4xl mb-3">{stat.icon}</div>
-            <div className="mb-2">{stat.component}</div>
-            <div className="text-sm text-gray-600 font-medium">{stat.label}</div>
-          </div>
-        </motion.div>
-      ))}
+            key={stat.label}
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ delay: index * 0.1 }}
+            whileHover={{ y: -5, scale: 1.02 }}
+            className="bg-gradient-to-br from-zinc-900 to-black border border-yellow-500/20 rounded-xl p-6 relative overflow-hidden group"
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/0 to-yellow-500/0 group-hover:from-yellow-500/10 group-hover:to-yellow-500/5 transition-all duration-300" />
+            
+            <div className="relative">
+              <div className="flex items-center justify-between mb-4">
+                <stat.icon className="w-8 h-8 text-yellow-500" />
+                <div className="w-12 h-12 bg-yellow-500/10 rounded-full flex items-center justify-center">
+                  <stat.icon className="w-6 h-6 text-yellow-500" />
+                </div>
+              </div>
+              
+              <div className="text-4xl font-black text-white mb-2">
+                {stat.isNumber ? <AnimatedNumber value={stat.value as number} /> : stat.value}
+              </div>
+              
+              <div className="text-gray-400 font-medium">{stat.label}</div>
+            </div>
+          </motion.div>
+        ))}
+      </div>
     </div>
   );
-};
-
-export default OverviewStats;
-
+}

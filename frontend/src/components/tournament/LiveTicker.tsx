@@ -1,5 +1,5 @@
-import React from 'react';
-import { motion } from 'framer-motion';
+import { motion } from "framer-motion";
+import { Trophy, Users, Calendar, MapPin } from "lucide-react";
 
 interface TickerItem {
   icon?: string;
@@ -7,45 +7,49 @@ interface TickerItem {
 }
 
 interface LiveTickerProps {
-  items: TickerItem[];
+  items?: TickerItem[];
 }
 
-const LiveTicker: React.FC<LiveTickerProps> = ({ items }) => {
-  // Duplicate items for seamless loop
+const defaultItems: TickerItem[] = [
+  { icon: "calendar", label: "Registration closes in 12 days" },
+  { icon: "users", label: "Referees provided" },
+  { icon: "trophy", label: "Trophies & medals" },
+  { label: "6-a-side" },
+  { icon: "map", label: "Indoor pitch" }
+];
+
+const iconMap: Record<string, any> = {
+  calendar: Calendar,
+  users: Users,
+  trophy: Trophy,
+  map: MapPin
+};
+
+export default function LiveTicker({ items = defaultItems }: LiveTickerProps) {
   const duplicatedItems = [...items, ...items];
 
   return (
-    <div className="relative overflow-hidden bg-black/20 backdrop-blur-sm py-3 border-y border-yellow-500/30">
+    <div className="bg-gradient-to-r from-zinc-900 via-black to-zinc-900 border-y border-yellow-500/30 py-4 overflow-hidden">
       <motion.div
-        className="flex items-center space-x-12"
-        animate={{
-          x: [0, -50],
-        }}
+        animate={{ x: [0, -50 * items.length + "%"] }}
         transition={{
-          x: {
-            repeat: Infinity,
-            repeatType: "loop",
-            duration: 20,
-            ease: "linear",
-          },
+          duration: 20,
+          repeat: Infinity,
+          ease: "linear"
         }}
+        className="flex gap-8 whitespace-nowrap"
       >
-        {duplicatedItems.map((item, index) => (
-          <div
-            key={index}
-            className="flex items-center space-x-3 text-white text-sm whitespace-nowrap"
-          >
-            {item.icon && <span className="text-yellow-500">{item.icon}</span>}
-            <span className="font-medium">{item.label}</span>
-            {index < duplicatedItems.length - 1 && (
-              <span className="text-yellow-500/50">•</span>
-            )}
-          </div>
-        ))}
+        {duplicatedItems.map((item, index) => {
+          const Icon = item.icon ? iconMap[item.icon] : null;
+          return (
+            <div key={index} className="flex items-center gap-2 text-white">
+              {Icon && <Icon className="w-4 h-4 text-yellow-500" />}
+              <span className="font-medium">{item.label}</span>
+              <span className="text-yellow-500 mx-4">•</span>
+            </div>
+          );
+        })}
       </motion.div>
     </div>
   );
-};
-
-export default LiveTicker;
-
+}

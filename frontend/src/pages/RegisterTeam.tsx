@@ -4,11 +4,13 @@ import { api, registerTeamToTournament } from '../lib/api';
 import { Tournament } from '../types/tournament';
 import { formatDate, formatCurrency, getDaysUntilDeadline, getDeadlineColor } from '../lib/helpers';
 import { useAuth } from '../context/AuthContext';
+import { saveAuthToken } from '../lib/auth';
 
 interface TeamFormData {
   name: string;
   manager_name: string;
   manager_email: string;
+  manager_password: string;
   phone: string;
   note: string;
 }
@@ -17,25 +19,29 @@ interface FormErrors {
   name?: string;
   manager_name?: string;
   manager_email?: string;
+  manager_password?: string;
   phone?: string;
 }
 
 const RegisterTeam: React.FC = () => {
   const { id, slug } = useParams<{ id?: string; slug?: string }>();
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, getMe, login } = useAuth();
   
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [formData, setFormData] = useState<TeamFormData>({
     name: '',
     manager_name: '',
     manager_email: '',
+    manager_password: '',
     phone: '',
     note: '',
   });
   const [errors, setErrors] = useState<FormErrors>({});
   const [rulesAccepted, setRulesAccepted] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [registrationId, setRegistrationId] = useState<number | null>(null);
+  const [teamId, setTeamId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +98,12 @@ const RegisterTeam: React.FC = () => {
       newErrors.manager_email = 'Please enter a valid email address';
     }
     
+    if (!formData.manager_password.trim()) {
+      newErrors.manager_password = 'Password is required';
+    } else if (formData.manager_password.length < 8) {
+      newErrors.manager_password = 'Password must be at least 8 characters';
+    }
+    
     if (formData.phone && !/^[\d\s\-\+\(\)]+$/.test(formData.phone)) {
       newErrors.phone = 'Please enter a valid phone number';
     }
@@ -122,16 +134,42 @@ const RegisterTeam: React.FC = () => {
     setError(null);
 
     try {
-      const response = await registerTeamToTournament(tournamentId, {
-        team: {
-          name: formData.name.trim(),
-          manager_name: formData.manager_name.trim(),
-          manager_email: formData.manager_email.trim(),
-          phone: formData.phone.trim() || undefined,
-        },
-        note: formData.note.trim() || undefined,
-      });
+          const response: any = await registerTeamToTournament(tournamentId, {
+            team: {
+              name: formData.name.trim(),
+              manager_name: formData.manager_name.trim(),
+              manager_email: formData.manager_email.trim(),
+              manager_password: formData.manager_password.trim(),
+              phone: formData.phone.trim() || undefined,
+            },
+            note: formData.note.trim() || undefined,
+          });
       
+      // Store registration ID and team ID for success screen
+      setRegistrationId(response.registration_id);
+      setTeamId(response.team_id);
+      
+      // If a new user account was created, log them in automatically
+      if (response.tokens && response.user_created) {
+        try {
+          // Save tokens first
+          saveAuthToken(response.tokens.access, response.tokens.refresh);
+          // Refresh user context - wait for it to complete
+          await getMe();
+        } catch (e) {
+          console.error('Failed to auto-login after registration:', e);
+          // Continue anyway - they can log in manually later
+        }
+      } else if (isAuthenticated) {
+        // Refresh user data if already authenticated
+        try {
+          await getMe();
+        } catch (e) {
+          // Ignore errors refreshing user data
+        }
+      }
+      
+      // Show success screen instead of redirecting immediately
       setIsSubmitted(true);
       
       // Fire success analytics event
@@ -230,21 +268,51 @@ const RegisterTeam: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <h1 className="text-3xl font-bold text-green-600 mb-3">You're in!</h1>
+                <h1 className="text-3xl font-bold text-yellow-600 mb-3">Registration Successful!</h1>
                 <p className="text-lg text-gray-700 mb-2">
-                  Your registration for <span className="font-semibold">{tournament.name}</span> is pending.
+                  Your team has been registered for <span className="font-semibold">{tournament.name}</span>.
                 </p>
-                <p className="text-sm text-gray-600">
-                  You will receive a confirmation email shortly with payment instructions.
+                <p className="text-sm text-gray-600 mb-4">
+                  You can now manage your team, add players, and complete payment when ready.
                 </p>
+                {registrationId && (
+                  <p className="text-xs text-gray-500">
+                    Registration ID: {registrationId}
+                  </p>
+                )}
               </div>
             </div>
 
             {/* Action Buttons */}
             <div className="space-y-4">
+              {teamId && (
+                <>
+                  <button 
+                    onClick={() => navigate(`/teams/${teamId}/add-players`)}
+                    className="btn-primary w-full bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold py-3 text-lg"
+                  >
+                    ➕ Add Players →
+                  </button>
+                  <button 
+                    onClick={() => navigate(`/teams/${teamId}`)}
+                    className="btn-outline w-full border-yellow-500 text-yellow-600 hover:bg-yellow-50"
+                  >
+                    Go to Team Hub →
+                  </button>
+                </>
+              )}
+              
+              {/* Pay Now Button - Payment integration will be added here */}
+              <button 
+                onClick={() => alert('Payment integration coming soon! This would redirect to payment gateway.')}
+                className="btn-outline w-full border-yellow-500 text-yellow-600 hover:bg-yellow-50"
+              >
+                Pay {formatCurrency(tournament.entry_fee)} Now
+              </button>
+              
               <button 
                 onClick={() => navigate(tournament.id ? `/tournaments/${tournament.id}` : `/t/${slug}`)} 
-                className="btn-primary w-full"
+                className="btn-outline w-full"
               >
                 View Tournament
               </button>
@@ -382,6 +450,27 @@ const RegisterTeam: React.FC = () => {
                     disabled={loading || registrationClosed}
                   />
                   {errors.manager_email && <p className="mt-1 text-sm text-red-600">{errors.manager_email}</p>}
+                </div>
+
+                {/* Manager Password */}
+                <div>
+                  <label htmlFor="manager_password" className="block text-sm font-medium text-gray-700 mb-2">
+                    Password <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    id="manager_password"
+                    name="manager_password"
+                    value={formData.manager_password}
+                    onChange={handleChange}
+                    onBlur={() => handleBlur('manager_password')}
+                    className={`form-input w-full ${errors.manager_password ? 'border-red-500' : ''}`}
+                    placeholder="Create a password (min 8 characters)"
+                    required
+                    disabled={loading || registrationClosed}
+                  />
+                  {errors.manager_password && <p className="mt-1 text-sm text-red-600">{errors.manager_password}</p>}
+                  <p className="mt-1 text-xs text-gray-500">You'll use this to log in and manage your team</p>
                 </div>
 
                 {/* Phone */}

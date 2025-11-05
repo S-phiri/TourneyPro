@@ -114,6 +114,12 @@ const EditTournament: React.FC = () => {
       setSuccess(null);
 
       // Prepare the payload for the backend
+      const venueId = payload.venue_id || (tournament.venue as any)?.id;
+      if (!venueId) {
+        setError('Venue is required');
+        return;
+      }
+
       const submitPayload = {
         name: payload.name,
         description: payload.description,
@@ -124,8 +130,22 @@ const EditTournament: React.FC = () => {
         team_min: payload.team_min,
         team_max: payload.team_max,
         status: payload.status,
+        format: (payload as any).format || tournament.format || 'league',
         hero_image: payload.hero_image,
-        venue: payload.venue_id // Backend expects 'venue' field with the ID
+        venue_id: venueId, // Send venue_id to serializer
+        // Include all marketing fields
+        tagline: (payload as any).tagline,
+        logo_url: (payload as any).logo_url,
+        banner_image: (payload as any).banner_image,
+        gallery_urls: (payload as any).gallery_urls,
+        sponsors: (payload as any).sponsors,
+        rules_md: (payload as any).rules_md,
+        prizes_md: (payload as any).prizes_md,
+        contact_email: (payload as any).contact_email,
+        contact_phone: (payload as any).contact_phone,
+        whatsapp_url: (payload as any).whatsapp_url,
+        registration_deadline: (payload as any).registration_deadline,
+        published: (payload as any).published !== undefined ? (payload as any).published : tournament.published
       };
 
       await api(`/tournaments/${id}/`, {

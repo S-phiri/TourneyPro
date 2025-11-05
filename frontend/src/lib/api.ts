@@ -28,6 +28,33 @@ export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
+// Resilient single tournament fetcher (no schema assumptions)
+export async function getTournament(id: string | number) {
+  const res = await fetch(`${BASE}/tournaments/${id}/`, {
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to fetch tournament');
+  const data = await res.json();
+  if (!Array.isArray(data.registrations)) data.registrations = [];
+  if (!Array.isArray(data.matches)) data.matches = [];
+  return data;
+}
+
+// Minimal open registration endpoint (status remains pending until payment webhook)
+export async function registerTeam(payload: {
+  tournament: number;
+  team: { name: string; manager_email: string; manager_name?: string; phone?: string };
+}) {
+  const res = await fetch(`${BASE}/registrations/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Failed to register team');
+  return res.json();
+}
+
 export async function registerTeamToTournament(
   tournamentId: number,
   payload: {
@@ -39,4 +66,192 @@ export async function registerTeamToTournament(
     method: 'POST',
     body: JSON.stringify({ tournament_id: tournamentId, ...payload }),
   });
+}
+
+// Additional helpers for teams/players/matches
+export async function getTeam(id: number) {
+  const res = await fetch(`${BASE}/teams/${id}/`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch team');
+  return res.json();
+}
+
+export async function createPlayer(body: any) {
+  const res = await fetch(`${BASE}/players/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('Failed to create player');
+  return res.json();
+}
+
+export async function addPlayerToTeam(body: any) {
+  const res = await fetch(`${BASE}/teamplayers/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error('Failed to add player to team');
+  return res.json();
+}
+
+export async function listMatches(params?: Record<string, any>) {
+  const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
+  const res = await fetch(`${BASE}/matches/${query}`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch matches');
+  return res.json();
+}
+
+export async function listTeams(params?: Record<string, any>) {
+  const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
+  const res = await fetch(`${BASE}/teams/${query}`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch teams');
+  return res.json();
+}
+
+export async function listTeamPlayers(params?: Record<string, any>) {
+  const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
+  const res = await fetch(`${BASE}/teamplayers/${query}`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch team players');
+  return res.json();
+}
+
+export async function generateFixtures(tournamentId: number) {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/generate-fixtures/`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || 'Failed to generate fixtures');
+  }
+  return res.json();
+}
+
+export async function setMatchScore(id: number, body: { home_score: number; away_score: number }) {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/matches/${id}/score/`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || 'Failed to set match score');
+  }
+  return res.json();
+}
+
+// Registration status check for polling
+export async function getRegistrationStatus(registrationId: number) {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/registrations/${registrationId}/status/`, {
+    headers,
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || 'Failed to get registration status');
+  }
+  return res.json();
+}
+
+export async function getTournamentStandings(tournamentId: number) {
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/standings/`, { 
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) {
+    // Don't throw for 401, just return empty array
+    if (res.status === 401) {
+      console.warn('Unauthorized access to standings, returning empty array');
+      return [];
+    }
+    throw new Error('Failed to fetch standings');
+  }
+  return res.json();
+}
+
+export async function getTournamentTopScorers(tournamentId: number) {
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/top-scorers/`, { 
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) {
+    // Don't throw for 401, just return empty array
+    if (res.status === 401) {
+      console.warn('Unauthorized access to top scorers, returning empty array');
+      return [];
+    }
+    throw new Error('Failed to fetch top scorers');
+  }
+  return res.json();
+}
+
+export async function getTournamentRole(tournamentId: number): Promise<{ is_organiser: boolean; is_manager: boolean }> {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/role/`, { 
+    headers,
+    credentials: 'include' 
+  });
+  if (!res.ok) throw new Error('Failed to fetch tournament role');
+  return res.json();
+}
+
+export async function createTeam(payload: { name: string; manager_name: string; manager_email: string; phone?: string; manager_id?: number }) {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/teams/`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Failed to create team');
+  return res.json();
+}
+
+export async function getTeamsByTournament(tournamentId: number) {
+  const res = await fetch(`${BASE}/registrations/?tournament=${tournamentId}`, { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch teams');
+  return res.json();
+}
+
+export async function publishTournament(tournamentId: number) {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/publish/`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('Failed to publish tournament');
+  return res.json();
 }

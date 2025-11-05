@@ -6,6 +6,8 @@ import { api } from '../lib/api';
 import { listMatches, createMatch, updateMatch, Match, CreateMatchData } from '../lib/matches';
 import { listRegistrations, Registration } from '../lib/registrations';
 import { Tournament } from '../types/tournament';
+import TournamentNav from '../components/tournament/TournamentNav';
+import UpdateScoreModal from '../components/tournament/UpdateScoreModal';
 
 // Loading spinner component
 const LoadingSpinner = () => (
@@ -62,8 +64,8 @@ const Fixtures: React.FC = () => {
     pitch: '',
     kickoff_at: '',
   });
-  const [editingMatch, setEditingMatch] = useState<number | null>(null);
-  const [scoreUpdate, setScoreUpdate] = useState<{ home: number; away: number }>({ home: 0, away: 0 });
+  const [editingMatch, setEditingMatch] = useState<Match | null>(null);
+  const [showScoreModal, setShowScoreModal] = useState(false);
 
   const { isOrganizer } = useAuth();
   const navigate = useNavigate();
@@ -118,17 +120,34 @@ const Fixtures: React.FC = () => {
   };
 
   const handleUpdateScore = async (matchId: number) => {
+    // Find the match and open modal
+    const match = matches.find(m => m.id === matchId);
+    if (match) {
+      setEditingMatch(match);
+      setShowScoreModal(true);
+    }
+  };
+
+  const handleSaveScore = async (scores: { home: number; away: number }, scorers: { home: number[]; away: number[] }) => {
+    if (!editingMatch) return;
+    
     try {
-      await updateMatch(matchId, {
-        home_score: scoreUpdate.home,
-        away_score: scoreUpdate.away,
+      await updateMatch(editingMatch.id, {
+        home_score: scores.home,
+        away_score: scores.away,
         status: 'finished'
       });
+      
+      // TODO: Update player goals in backend
+      // For now, we'll just log the scorers
+      console.log('Scorers:', scorers);
+      
       setEditingMatch(null);
-      setScoreUpdate({ home: 0, away: 0 });
+      setShowScoreModal(false);
       fetchData(); // Refresh matches
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update score');
+      throw err; // Re-throw to let modal handle it
     }
   };
 
@@ -162,207 +181,200 @@ const Fixtures: React.FC = () => {
   }
 
   return (
-    <div className="container py-8">
-      <div className="mb-6">
-        <button
-          onClick={() => navigate(`/tournaments/${id}`)}
-          className="text-yellow-500 hover:text-yellow-600 font-medium mb-4"
-        >
-          ← Back to Tournament
-        </button>
-        <h1 className="page-header">{tournament.name} - Fixtures</h1>
-      </div>
+    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+      {/* Tournament Navigation */}
+      <TournamentNav tournamentId={tournament.id} />
 
-      {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-red-600">{error}</p>
-        </div>
-      )}
+      <div className="container py-8">
+        <h1 className="text-4xl font-black text-yellow-500 mb-6">{tournament.name} - Fixtures</h1>
 
-      {/* Add Match Form (Organizer Only) */}
-      {isOrganizer && (
-        <div className="mb-8">
-          {!showAddMatch ? (
-            <button
-              onClick={() => setShowAddMatch(true)}
-              className="btn-primary mb-4"
-            >
-              Add Match
-            </button>
+        {error && (
+          <div className="mb-6 p-4 bg-red-900/30 border border-red-500/50 rounded-xl">
+            <p className="text-red-400">{error}</p>
+          </div>
+        )}
+
+        {/* Add Match Form (Organizer Only) */}
+        {isOrganizer && (
+          <div className="mb-8">
+            {!showAddMatch ? (
+              <button
+                onClick={() => setShowAddMatch(true)}
+                className="px-6 py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5 mb-4 flex items-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Match
+              </button>
+            ) : (
+              <div className="bg-zinc-900/50 border border-zinc-700 rounded-2xl p-8">
+                <h2 className="text-2xl font-bold text-white mb-6">Add New Match</h2>
+                <form onSubmit={handleAddMatch} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="home_team" className="block text-sm font-medium text-gray-300 mb-2">Home Team</label>
+                      <select
+                        id="home_team"
+                        value={newMatch.home_team}
+                        onChange={(e) => setNewMatch({ ...newMatch, home_team: parseInt(e.target.value) })}
+                        className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-600 rounded-lg text-white focus:outline-none focus:border-yellow-500 transition-colors"
+                        required
+                      >
+                        <option value={0}>Select home team</option>
+                        {registrations.map(reg => (
+                          <option key={reg.team.id} value={reg.team.id}>
+                            {reg.team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="away_team" className="block text-sm font-medium text-gray-300 mb-2">Away Team</label>
+                      <select
+                        id="away_team"
+                        value={newMatch.away_team}
+                        onChange={(e) => setNewMatch({ ...newMatch, away_team: parseInt(e.target.value) })}
+                        className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-600 rounded-lg text-white focus:outline-none focus:border-yellow-500 transition-colors"
+                        required
+                      >
+                        <option value={0}>Select away team</option>
+                        {registrations.map(reg => (
+                          <option key={reg.team.id} value={reg.team.id}>
+                            {reg.team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="kickoff_at" className="block text-sm font-medium text-gray-300 mb-2">Kickoff Time</label>
+                      <input
+                        type="datetime-local"
+                        id="kickoff_at"
+                        value={newMatch.kickoff_at}
+                        onChange={(e) => setNewMatch({ ...newMatch, kickoff_at: e.target.value })}
+                        className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-600 rounded-lg text-white focus:outline-none focus:border-yellow-500 transition-colors"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="pitch" className="block text-sm font-medium text-gray-300 mb-2">Pitch (Optional)</label>
+                      <input
+                        type="text"
+                        id="pitch"
+                        value={newMatch.pitch}
+                        onChange={(e) => setNewMatch({ ...newMatch, pitch: e.target.value })}
+                        className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-yellow-500 transition-colors"
+                        placeholder="e.g., Pitch 1"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-4">
+                    <button 
+                      type="submit" 
+                      className="px-6 py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
+                    >
+                      Create Match
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddMatch(false)}
+                      className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 text-white rounded-xl font-medium transition-all"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Matches List */}
+        <div className="bg-zinc-900/50 border border-zinc-700 rounded-2xl p-8">
+          <h2 className="text-3xl font-bold text-white mb-6">Match Schedule</h2>
+          
+          {matches.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-400 text-lg">No matches scheduled yet.</p>
+              {isOrganizer && (
+                <button
+                  onClick={() => setShowAddMatch(true)}
+                  className="mt-4 px-6 py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl font-bold text-sm transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
+                >
+                  Add First Match
+                </button>
+              )}
+            </div>
           ) : (
-            <div className="card">
-              <h2 className="section-title mb-4">Add New Match</h2>
-              <form onSubmit={handleAddMatch} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="home_team" className="form-label">Home Team</label>
-                    <select
-                      id="home_team"
-                      value={newMatch.home_team}
-                      onChange={(e) => setNewMatch({ ...newMatch, home_team: parseInt(e.target.value) })}
-                      className="form-input"
-                      required
-                    >
-                      <option value={0}>Select home team</option>
-                      {registrations.map(reg => (
-                        <option key={reg.team.id} value={reg.team.id}>
-                          {reg.team.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="away_team" className="form-label">Away Team</label>
-                    <select
-                      id="away_team"
-                      value={newMatch.away_team}
-                      onChange={(e) => setNewMatch({ ...newMatch, away_team: parseInt(e.target.value) })}
-                      className="form-input"
-                      required
-                    >
-                      <option value={0}>Select away team</option>
-                      {registrations.map(reg => (
-                        <option key={reg.team.id} value={reg.team.id}>
-                          {reg.team.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="kickoff_at" className="form-label">Kickoff Time</label>
-                    <input
-                      type="datetime-local"
-                      id="kickoff_at"
-                      value={newMatch.kickoff_at}
-                      onChange={(e) => setNewMatch({ ...newMatch, kickoff_at: e.target.value })}
-                      className="form-input"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="pitch" className="form-label">Pitch (Optional)</label>
-                    <input
-                      type="text"
-                      id="pitch"
-                      value={newMatch.pitch}
-                      onChange={(e) => setNewMatch({ ...newMatch, pitch: e.target.value })}
-                      className="form-input"
-                      placeholder="e.g., Pitch 1"
-                    />
-                  </div>
-                </div>
-                <div className="flex gap-4">
-                  <button type="submit" className="btn-primary">
-                    Create Match
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddMatch(false)}
-                    className="btn-outline"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-zinc-700">
+                    <th className="text-left py-4 px-4 font-bold text-white">Date & Time</th>
+                    <th className="text-left py-4 px-4 font-bold text-white">Home Team</th>
+                    <th className="text-center py-4 px-4 font-bold text-white">Score</th>
+                    <th className="text-left py-4 px-4 font-bold text-white">Away Team</th>
+                    <th className="text-left py-4 px-4 font-bold text-white">Pitch</th>
+                    {isOrganizer && <th className="text-left py-4 px-4 font-bold text-white">Actions</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {matches.map((match) => (
+                    <tr key={match.id} className="border-b border-zinc-700/50 hover:bg-zinc-800/30 transition-colors">
+                      <td className="py-4 px-4 text-gray-300">
+                        {formatDateTime(match.kickoff_at)}
+                      </td>
+                      <td className="py-4 px-4 font-semibold text-white">
+                        {match.home_team.name}
+                      </td>
+                      <td className="py-4 px-4 text-center">
+                        <span className="text-2xl font-black text-yellow-400">
+                          {match.home_score} - {match.away_score}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 font-semibold text-white">
+                        {match.away_team.name}
+                      </td>
+                      <td className="py-4 px-4 text-gray-400">
+                        {match.pitch || '-'}
+                      </td>
+                      {isOrganizer && (
+                        <td className="py-4 px-4">
+                          <button
+                            onClick={() => handleUpdateScore(match.id)}
+                            className="px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-lg font-bold text-sm transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
+                          >
+                            ⚽ Update Score
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
-      )}
-
-      {/* Matches List */}
-      <div className="card">
-        <h2 className="section-title mb-6">Match Schedule</h2>
-        
-        {matches.length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-gray-600">No matches scheduled yet.</p>
-            {isOrganizer && (
-              <button
-                onClick={() => setShowAddMatch(true)}
-                className="btn-primary mt-4"
-              >
-                Add First Match
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 font-medium text-gray-900">Date & Time</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-900">Home Team</th>
-                  <th className="text-center py-3 px-4 font-medium text-gray-900">Score</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-900">Away Team</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-900">Pitch</th>
-                  {isOrganizer && <th className="text-left py-3 px-4 font-medium text-gray-900">Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {matches.map((match) => (
-                  <tr key={match.id} className="border-b border-gray-100">
-                    <td className="py-3 px-4 text-gray-700">
-                      {formatDateTime(match.kickoff_at)}
-                    </td>
-                    <td className="py-3 px-4 font-medium">
-                      {match.home_team.name}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      {editingMatch === match.id ? (
-                        <div className="flex items-center justify-center gap-2">
-                          <input
-                            type="number"
-                            value={scoreUpdate.home}
-                            onChange={(e) => setScoreUpdate({ ...scoreUpdate, home: parseInt(e.target.value) || 0 })}
-                            className="w-12 px-2 py-1 border border-gray-300 rounded text-center"
-                          />
-                          <span className="text-gray-500">-</span>
-                          <input
-                            type="number"
-                            value={scoreUpdate.away}
-                            onChange={(e) => setScoreUpdate({ ...scoreUpdate, away: parseInt(e.target.value) || 0 })}
-                            className="w-12 px-2 py-1 border border-gray-300 rounded text-center"
-                          />
-                          <button
-                            onClick={() => handleUpdateScore(match.id)}
-                            className="text-green-600 hover:text-green-800 text-sm font-medium"
-                          >
-                            Save
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="font-medium">
-                          {match.home_score} - {match.away_score}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 font-medium">
-                      {match.away_team.name}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {match.pitch || '-'}
-                    </td>
-                    {isOrganizer && (
-                      <td className="py-3 px-4">
-                        {editingMatch !== match.id && match.status === 'scheduled' && (
-                          <button
-                            onClick={() => setEditingMatch(match.id)}
-                            className="text-yellow-600 hover:text-yellow-800 text-sm font-medium"
-                          >
-                            Update Score
-                          </button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
+
+      {/* Score Update Modal */}
+      {editingMatch && (
+        <UpdateScoreModal
+          isOpen={showScoreModal}
+          onClose={() => {
+            setShowScoreModal(false);
+            setEditingMatch(null);
+          }}
+          matchId={editingMatch.id}
+          homeTeam={editingMatch.home_team}
+          awayTeam={editingMatch.away_team}
+          currentScores={{ home: editingMatch.home_score, away: editingMatch.away_score }}
+          onSave={handleSaveScore}
+        />
+      )}
     </div>
   );
 };

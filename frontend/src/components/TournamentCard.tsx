@@ -1,5 +1,7 @@
 import React from 'react';
 import { Tournament } from '../types/tournament';
+import { motion } from 'framer-motion';
+import { MapPin, Calendar, DollarSign, Users } from 'lucide-react';
 
 interface TournamentCardProps {
   tournament: Tournament;
@@ -22,95 +24,105 @@ const formatDate = (dateString: string): string => {
 };
 
 const TournamentCard: React.FC<TournamentCardProps> = ({ tournament, onClick }) => {
+  const statusColors = {
+    open: "bg-green-500",
+    draft: "bg-gray-500",
+    closed: "bg-red-500",
+    completed: "bg-blue-500"
+  };
+
+  const statusLabels = {
+    open: "Open",
+    draft: "Draft",
+    closed: "Closed",
+    completed: "Completed"
+  };
+
+  const bannerImage = tournament.banner_image || tournament.hero_image || 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=800&q=80';
+
   return (
-    <div
-      className="card cursor-pointer"
+    <motion.div
+      whileHover={{ y: -8, scale: 1.02 }}
+      transition={{ duration: 0.3 }}
       onClick={onClick}
+      className="group cursor-pointer relative overflow-hidden rounded-2xl bg-gray-800 border border-yellow-500/20 hover:border-yellow-500/50 transition-all duration-300 h-full flex flex-col"
     >
-      {/* Hero/Flyer Image */}
-      {tournament.hero_image && (
-        <div className="h-48 overflow-hidden">
-          <img
-            src={tournament.hero_image}
-            alt={tournament.name}
-            className="w-full h-full object-cover"
-          />
+      {/* Background Image with Overlay */}
+      <div className="relative h-64 overflow-hidden flex-shrink-0">
+        <div
+          className="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-110"
+          style={{ backgroundImage: `url(${bannerImage})` }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
+        
+        {/* Status Badge */}
+        <div className="absolute top-4 left-4">
+          <span className={`${statusColors[tournament.status as keyof typeof statusColors] || 'bg-gray-500'} px-3 py-1 rounded-full text-white text-xs font-bold uppercase tracking-wider shadow-lg`}>
+            {statusLabels[tournament.status as keyof typeof statusLabels] || tournament.status}
+          </span>
         </div>
-      )}
+      </div>
       
       {/* Card Content */}
-      <div className="p-6">
-        <h3 className="text-xl font-bold text-gray-900 mb-2 line-clamp-2">
+      <div className="p-6 bg-gray-900 flex-1 flex flex-col">
+        <h3 className="text-2xl font-black text-white mb-3 line-clamp-2 group-hover:text-yellow-500 transition-colors">
           {tournament.name}
         </h3>
         
-        <div className="space-y-2 mb-4">
-          <div className="flex items-center text-gray-600">
-            <svg className="w-4 h-4 mr-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
+        {tournament.tagline && (
+          <p className="text-gray-400 text-sm italic mb-4 line-clamp-1">
+            {tournament.tagline}
+          </p>
+        )}
+
+        <div className="space-y-3 mb-4">
+          <div className="flex items-center gap-2 text-gray-300">
+            <MapPin className="w-4 h-4 text-yellow-500 flex-shrink-0" />
             <span className="text-sm">{tournament.city}</span>
+            {tournament.venue?.name && (
+              <span className="text-sm text-gray-500">• {tournament.venue.name}</span>
+            )}
           </div>
           
-          <div className="flex items-center text-gray-600">
-            <svg className="w-4 h-4 mr-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
+          <div className="flex items-center gap-2 text-gray-300">
+            <Calendar className="w-4 h-4 text-yellow-500 flex-shrink-0" />
             <span className="text-sm">
               {formatDate(tournament.start_date)} → {formatDate(tournament.end_date)}
             </span>
           </div>
           
-          <div className="flex items-center text-gray-600">
-            <svg className="w-4 h-4 mr-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
-            </svg>
-            <span className="text-sm font-semibold text-green-600">
+          <div className="flex items-center gap-2 text-gray-300">
+            <DollarSign className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+            <span className="text-sm font-bold text-yellow-500">
               {formatCurrency(tournament.entry_fee)}
             </span>
           </div>
           
-            {tournament.venue?.name && (
-              <div className="flex items-center text-gray-600">
-                <svg className="w-4 h-4 mr-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                </svg>
-                <span className="text-sm">{tournament.venue.name}</span>
-              </div>
-            )}
-
-            {tournament.organizer && (
-              <div className="flex items-center text-gray-500">
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-                <span className="text-xs">Hosted by {tournament.organizer.username}</span>
-              </div>
-            )}
+          {tournament.team_max && (
+            <div className="flex items-center gap-2 text-gray-300">
+              <Users className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+              <span className="text-sm">
+                Up to {tournament.team_max} teams
+              </span>
+            </div>
+          )}
         </div>
         
-        {/* Status Badge */}
-        <div className="mb-4">
-          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-            tournament.status === 'open' 
-              ? 'bg-green-100 text-green-800' 
-              : tournament.status === 'draft'
-              ? 'bg-gray-100 text-gray-800'
-              : tournament.status === 'closed'
-              ? 'bg-red-100 text-red-800'
-              : 'bg-blue-100 text-blue-800'
-          }`}>
-            {tournament.status}
-          </span>
-        </div>
-        
-        {/* View Details Button */}
-        <button className="w-full btn-primary py-2">
-          View Details
-        </button>
+        {/* CTA Button */}
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          className="w-full bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold py-3 rounded-xl shadow-lg shadow-yellow-500/30 transition-all mt-auto"
+        >
+          View Tournament
+        </motion.button>
       </div>
-    </div>
+        
+      {/* Glow Effect */}
+      <div className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-yellow-500/0 via-yellow-500/10 to-yellow-500/0 blur-xl" />
+      </div>
+    </motion.div>
   );
 };
 

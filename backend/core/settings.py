@@ -4,7 +4,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults'
 DEBUG = True
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
 # Apps
 INSTALLED_APPS = [
@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     'corsheaders',
 
     # Local apps
+    'accounts',
     'tournaments',
 ]
 
@@ -66,7 +67,27 @@ DATABASES = {
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # your Vite dev server
+    "http://127.0.0.1:5173",
 ]
+
+# Allow cookies/credentials from the frontend if needed
+CORS_ALLOW_CREDENTIALS = True
+
+# If you use CSRF/session on API endpoints during dev
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+# Optional CORS header tuning
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-language",
+    "content-type",
+    "authorization",
+    "x-csrftoken",
+]
+CORS_EXPOSE_HEADERS = ["content-type"]
 
 # Static files
 STATIC_URL = 'static/'

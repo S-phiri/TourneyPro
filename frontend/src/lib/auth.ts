@@ -12,6 +12,7 @@ export interface User {
   email?: string;
   first_name?: string;
   last_name?: string;
+  role_hint?: 'host' | 'manager' | 'viewer';
 }
 
 // Token management
@@ -37,6 +38,11 @@ export function setRefreshToken(token: string): void {
 export function clearAuthToken(): void {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
+}
+
+export function saveAuthToken(accessToken: string, refreshToken: string): void {
+  setAuthToken(accessToken);
+  setRefreshToken(refreshToken);
 }
 
 // Auth API calls
@@ -122,10 +128,11 @@ export async function getCurrentUser(): Promise<User> {
     throw new Error('No access token available');
   }
 
-  const response = await fetch(`${BASE}/auth/user/`, {
+  const response = await fetch(`${BASE}/auth/me/`, {
     headers: {
       'Authorization': `Bearer ${token}`,
     },
+    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -143,6 +150,47 @@ export async function getCurrentUser(): Promise<User> {
   }
 
   return response.json();
+}
+
+export interface RegisterManagerPayload {
+  username: string;
+  email: string;
+  password: string;
+  first_name?: string;
+  last_name?: string;
+}
+
+export interface RegisterManagerResponse {
+  detail: string;
+  user: User;
+  tokens: {
+    access: string;
+    refresh: string;
+  };
+}
+
+export async function registerManager(payload: RegisterManagerPayload): Promise<RegisterManagerResponse> {
+  const response = await fetch(`${BASE}/auth/register-manager/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || 'Registration failed');
+  }
+
+  const data: RegisterManagerResponse = await response.json();
+  
+  // Store tokens
+  setAuthToken(data.tokens.access);
+  setRefreshToken(data.tokens.refresh);
+  
+  return data;
 }
 
 // Utility function to check if user is authenticated

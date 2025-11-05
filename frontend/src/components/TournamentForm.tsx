@@ -32,7 +32,8 @@ const TournamentForm: React.FC<TournamentFormProps> = ({
     team_min: initial.team_min || 2,
     team_max: initial.team_max || 16,
     status: initial.status || 'draft',
-    venue_id: initial.venue_id || '',
+    format: (initial as any).format || 'league',
+    venue_id: initial.venue_id || (initial.venue as any)?.id || '',
     hero_image: initial.hero_image || '',
     // Marketing fields
     tagline: initial.tagline || '',
@@ -291,6 +292,31 @@ const TournamentForm: React.FC<TournamentFormProps> = ({
               <option value="closed">Closed</option>
               <option value="completed">Completed</option>
             </select>
+          </div>
+
+          {/* Format */}
+          <div>
+            <label htmlFor="format" className="form-label">
+              Tournament Format
+            </label>
+            <select
+              id="format"
+              name="format"
+              value={formData.format}
+              onChange={handleChange}
+              className="form-input"
+              disabled={initial.id && (initial as any).matches?.some((m: any) => m.status === 'finished')}
+            >
+              <option value="league">League / Round Robin</option>
+              <option value="knockout">Knock-out</option>
+              <option value="combination">Combination</option>
+              <option value="challenge">Challenge</option>
+            </select>
+            {initial.id && (initial as any).matches?.some((m: any) => m.status === 'finished') && (
+              <p className="text-sm text-gray-500 mt-1">
+                Format cannot be changed after matches have been played.
+              </p>
+            )}
           </div>
 
           {/* Team Min */}

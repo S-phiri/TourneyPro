@@ -1,6 +1,7 @@
 // src/context/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, login as authLogin, logout as authLogout, getCurrentUser, getAuthToken, clearAuthToken } from '../lib/auth';
+import { getTournamentRole as apiGetTournamentRole } from '../lib/api';
 
 interface AuthContextType {
   user: User | null;
@@ -10,6 +11,9 @@ interface AuthContextType {
   logout: () => Promise<void>;
   isAuthenticated: boolean;
   isOrganizer: boolean;
+  roleHint: 'host' | 'manager' | 'viewer' | null;
+  getMe: () => Promise<void>;
+  getTournamentRole: (tournamentId: number) => Promise<{ is_organiser: boolean; is_manager: boolean }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -25,28 +29,36 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const isAuthenticated = !!accessToken && !!user;
   const isOrganizer = !!accessToken; // Any authenticated user can be an organizer
+  const roleHint = user?.role_hint || null;
 
   // Initialize auth state on app load
   useEffect(() => {
-    const initializeAuth = async () => {
-      const token = getAuthToken();
-      
-      if (token) {
-        try {
-          const userData = await getCurrentUser();
-          setUser(userData);
-          setAccessToken(token);
-        } catch (error) {
-          console.warn('Failed to restore auth state:', error);
-          clearAuthToken();
-        }
-      }
-      
-      setIsLoading(false);
-    };
-
-    initializeAuth();
+    getMe();
   }, []);
+
+  const getMe = async () => {
+    setIsLoading(true);
+    const token = getAuthToken();
+    
+    if (token) {
+      try {
+        const userData = await getCurrentUser();
+        setUser(userData);
+        setAccessToken(token);
+      } catch (error) {
+        console.warn('Failed to restore auth state:', error);
+        clearAuthToken();
+        setUser(null);
+        setAccessToken(null);
+      }
+    }
+    
+    setIsLoading(false);
+  };
+
+  const getTournamentRole = async (tournamentId: number) => {
+    return apiGetTournamentRole(tournamentId);
+  };
 
   const login = async (username: string, password: string) => {
     try {
@@ -85,6 +97,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     logout,
     isAuthenticated,
     isOrganizer,
+    roleHint,
+    getMe,
+    getTournamentRole,
   };
 
   return (

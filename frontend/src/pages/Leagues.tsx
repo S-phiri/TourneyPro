@@ -3,18 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { Tournament } from '../types/tournament';
 import TournamentCard from '../components/TournamentCard';
+import { motion } from 'framer-motion';
 
 // Loading spinner component
 const LoadingSpinner = () => (
   <div className="flex justify-center items-center min-h-64">
-    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-600"></div>
   </div>
 );
 
 // Error alert component
 const ErrorAlert = ({ message, onRetry }: { message: string; onRetry: () => void }) => (
   <div className="max-w-md mx-auto mt-8">
-    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+    <div className="bg-red-900/50 border border-red-500/50 rounded-lg p-4 backdrop-blur-sm">
       <div className="flex">
         <div className="flex-shrink-0">
           <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -22,16 +23,16 @@ const ErrorAlert = ({ message, onRetry }: { message: string; onRetry: () => void
           </svg>
         </div>
         <div className="ml-3">
-          <h3 className="text-sm font-medium text-red-800">
+          <h3 className="text-sm font-medium text-red-300">
             Error loading tournaments
           </h3>
-          <div className="mt-2 text-sm text-red-700">
+          <div className="mt-2 text-sm text-red-200">
             <p>{message}</p>
           </div>
           <div className="mt-4">
             <button
               onClick={onRetry}
-              className="bg-red-100 text-red-800 px-3 py-1 rounded-md text-sm font-medium hover:bg-red-200 transition-colors"
+              className="bg-red-800/50 text-red-100 px-3 py-1 rounded-md text-sm font-medium hover:bg-red-700/50 transition-colors"
             >
               Try again
             </button>
@@ -65,61 +66,123 @@ const Leagues: React.FC = () => {
     fetchTournaments();
   }, []);
 
-  const handleViewDetails = (tournamentId: number) => {
-    navigate(`/tournaments/${tournamentId}`);
+  const handleViewDetails = (tournamentId: number, slug?: string) => {
+    if (slug) {
+      navigate(`/t/${slug}`);
+    } else {
+      navigate(`/tournaments/${tournamentId}`);
+    }
   };
 
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold mb-6 text-center">Tournaments</h1>
-        <LoadingSpinner />
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+        <div className="container mx-auto px-4 py-16">
+          <motion.h1 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-5xl md:text-7xl font-black text-white mb-12 text-center"
+            style={{ textShadow: "0 0 30px rgba(234, 179, 8, 0.5)" }}
+          >
+            Tournaments
+          </motion.h1>
+          <LoadingSpinner />
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold mb-6 text-center">Tournaments</h1>
-        <ErrorAlert message={error} onRetry={fetchTournaments} />
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+        <div className="container mx-auto px-4 py-16">
+          <motion.h1 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-5xl md:text-7xl font-black text-white mb-12 text-center"
+            style={{ textShadow: "0 0 30px rgba(234, 179, 8, 0.5)" }}
+          >
+            Tournaments
+          </motion.h1>
+          <ErrorAlert message={error} onRetry={fetchTournaments} />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-6 text-center">Tournaments</h1>
-      
-      {tournaments.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="max-w-md mx-auto">
-            <div className="mb-6">
-              <svg className="mx-auto h-24 w-24 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-medium text-gray-900 mb-2">No tournaments yet</h3>
-            <p className="text-gray-500 mb-6">Be the first to host a tournament!</p>
-            <button
-              onClick={() => navigate('/start-hosting')}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+      {/* Hero Header */}
+      <section className="relative py-20 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-b from-black/50 to-transparent" />
+        <div className="container mx-auto px-4 relative z-10">
+          <motion.div
+            initial={{ opacity: 0, y: -30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="text-center"
+          >
+            <h1 
+              className="text-4xl md:text-5xl lg:text-6xl font-black text-white mb-4 leading-tight"
+              style={{ textShadow: "0 0 20px rgba(234, 179, 8, 0.5)" }}
             >
-              Start Hosting
-            </button>
-          </div>
+              Tournaments
+            </h1>
+            <p className="text-gray-400 text-lg md:text-xl">
+              Discover exciting competitions near you
+            </p>
+          </motion.div>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {tournaments.map((tournament) => (
-            <TournamentCard
-              key={tournament.id}
-              tournament={tournament}
-              onClick={() => handleViewDetails(tournament.id)}
-            />
-          ))}
-        </div>
-      )}
+      </section>
+
+      {/* Tournaments Grid */}
+      <section className="container mx-auto px-4 pb-16">
+        {tournaments.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="text-center py-20"
+          >
+            <div className="max-w-md mx-auto">
+              <div className="mb-6">
+                <svg className="mx-auto h-24 w-24 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-2">No tournaments yet</h3>
+              <p className="text-gray-400 mb-8">Be the first to host a tournament!</p>
+              <button
+                onClick={() => navigate('/start-hosting')}
+                className="bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold px-8 py-3 rounded-xl shadow-xl shadow-yellow-500/50 transition-all hover:scale-105"
+              >
+                Start Hosting
+              </button>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8"
+          >
+            {tournaments.map((tournament, index) => (
+              <motion.div
+                key={tournament.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.1 }}
+              >
+                <TournamentCard
+                  tournament={tournament}
+                  onClick={() => handleViewDetails(tournament.id, (tournament as any).slug)}
+                />
+              </motion.div>
+            ))}
+          </motion.div>
+        )}
+      </section>
     </div>
   );
 };

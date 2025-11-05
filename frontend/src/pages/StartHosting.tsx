@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { Tournament, Venue } from '../types/tournament';
 import TournamentForm from '../components/TournamentForm';
@@ -140,9 +140,15 @@ const StartHosting: React.FC = () => {
     <div className="container py-8">
       <div className="text-center mb-8">
         <h1 className="page-header">Create Your Tournament</h1>
-        <p className="text-gray-600 max-w-2xl mx-auto">
+        <p className="text-gray-600 max-w-2xl mx-auto mb-4">
           Create your next football showdown and bring teams together for an unforgettable experience.
         </p>
+        <Link
+          to="/host/new"
+          className="inline-block px-6 py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold rounded-lg transition-colors"
+        >
+          Use Step-by-Step Wizard →
+        </Link>
       </div>
       
       {/* Success Message */}

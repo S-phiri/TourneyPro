@@ -25,6 +25,7 @@ export interface Tournament {
   team_min: number;
   team_max: number;
   status: 'draft' | 'open' | 'closed' | 'completed';
+  format?: 'knockout' | 'league' | 'combination' | 'challenge';
   hero_image?: string;
   venue?: Venue;       // read shape
   venue_id?: number;   // write shape

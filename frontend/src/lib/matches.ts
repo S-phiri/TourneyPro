@@ -42,4 +42,4 @@ export const createMatch = (payload: CreateMatchData): Promise<Match> =>
   api('/matches/', { method: 'POST', body: JSON.stringify(payload) });
 
 export const updateMatch = (id: number, payload: UpdateMatchData): Promise<Match> => 
-  api(`/matches/${id}/`, { method: 'PUT', body: JSON.stringify(payload) });
+  api(`/matches/${id}/`, { method: 'PATCH', body: JSON.stringify(payload) });

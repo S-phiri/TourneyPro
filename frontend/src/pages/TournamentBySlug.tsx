@@ -1,10 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
+import { api, getTournamentStandings, getTournamentTopScorers, getTournamentRole, generateFixtures } from '../lib/api';
 import { Tournament } from '../types/tournament';
+import { listRegistrations } from '../lib/registrations';
+import { listMatches } from '../lib/matches';
 import Markdown from '../lib/markdown';
-import { parseCSV, parseSponsors, formatDate, formatCurrency, getDaysUntilDeadline, getDeadlineColor } from '../lib/helpers';
-
+import { parseCSV, parseSponsors, formatDate, formatCurrency } from '../lib/helpers';
+import TournamentHero from '../components/tournament/TournamentHero';
+import LiveTicker from '../components/tournament/LiveTicker';
+import OverviewStats from '../components/tournament/OverviewStats';
+import KeyInfoGrid from '../components/tournament/KeyInfoGrid';
+import TournamentTabs from '../components/tournament/TournamentTabs';
+import Gallery from '../components/tournament/Gallery';
+import SponsorsMarquee from '../components/tournament/SponsorsMarquee';
+import ContactBar from '../components/tournament/ContactBar';
+import MobileStickyCTA from '../components/tournament/MobileStickyCTA';
 // Loading spinner component
 const LoadingSpinner = () => (
   <div className="flex justify-center items-center min-h-64">
@@ -44,9 +55,19 @@ const ErrorAlert = ({ message, onRetry }: { message: string; onRetry: () => void
 const TournamentBySlug: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const { isOrganizer, getTournamentRole, user } = useAuth();
   const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [registrations, setRegistrations] = useState<any[]>([]);
+  const [matches, setMatches] = useState<any[]>([]);
+  const [standings, setStandings] = useState<any[]>([]);
+  const [topScorers, setTopScorers] = useState<any[]>([]);
+  const [tournamentRole, setTournamentRole] = useState<{ is_organiser: boolean; is_manager: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Safe helpers
+  const toStr = (v: any) => (v == null ? "" : String(v));
+  const arr = (v: any) => (Array.isArray(v) ? v : []);
 
   const fetchTournament = async () => {
     if (!slug) {
@@ -60,6 +81,27 @@ const TournamentBySlug: React.FC = () => {
       setError(null);
       const data = await api<Tournament>(`/tournaments/by-slug/${slug}/`);
       setTournament(data);
+
+      // Fetch related data
+      if (data.id) {
+        try {
+          const [registrationsData, matchesData, standingsData, scorersData, roleData] = await Promise.all([
+            listRegistrations(data.id),
+            listMatches(data.id),
+            getTournamentStandings(data.id).catch(() => []),
+            getTournamentTopScorers(data.id).catch(() => []),
+            getTournamentRole(data.id).catch(() => ({ is_organiser: false, is_manager: false }))
+          ]);
+          setRegistrations(registrationsData);
+          setMatches(matchesData);
+          setStandings(Array.isArray(standingsData) ? standingsData : []);
+          setTopScorers(Array.isArray(scorersData) ? scorersData : []);
+          setTournamentRole(roleData);
+        } catch (err) {
+          // Silently fail if data not available
+          console.error('Failed to fetch related data:', err);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch tournament');
     } finally {
@@ -79,27 +121,9 @@ const TournamentBySlug: React.FC = () => {
     navigate('/leagues');
   };
 
-  const handleShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: tournament?.name || 'Tournament',
-          text: tournament?.tagline || tournament?.description || '',
-          url: window.location.href,
-        });
-      } catch (err) {
-        console.log('Error sharing:', err);
-      }
-    } else {
-      // Fallback: copy to clipboard
-      navigator.clipboard.writeText(window.location.href);
-      alert('Link copied to clipboard!');
-    }
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
         <LoadingSpinner />
       </div>
     );
@@ -107,7 +131,7 @@ const TournamentBySlug: React.FC = () => {
 
   if (error || !tournament) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800 flex items-center justify-center">
         <div className="text-center">
           <div className="mb-6">
             <button
@@ -123,142 +147,237 @@ const TournamentBySlug: React.FC = () => {
     );
   }
 
-  const bannerImage = tournament.banner_image || tournament.hero_image;
+  const bannerImage = tournament.banner_image || tournament.hero_image || 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=1920&q=80';
   const galleryImages = parseCSV(tournament.gallery_urls);
   const sponsors = parseSponsors(tournament.sponsors);
-  const daysUntilDeadline = tournament.registration_deadline ? getDaysUntilDeadline(tournament.registration_deadline) : null;
+  
+  // Determine status
+  const tournamentStatus: "upcoming" | "live" | "completed" = 
+    tournament.status === 'completed' ? 'completed' :
+    tournament.status === 'open' ? 'upcoming' : 'upcoming';
+
+  // Transform data for components
+  const completedMatches = matches.filter(match => match.status === 'finished');
+  const upcomingMatches = matches.filter(match => match.status === 'scheduled');
+
+  const teams = registrations.map(reg => ({
+    id: reg.team.id.toString(),
+    name: reg.team.name,
+    initials: reg.team.name.substring(0, 2).toUpperCase(),
+    manager: reg.team.manager_name
+  }));
+
+  const fixtures = upcomingMatches.map(match => ({
+    id: match.id.toString(),
+    time: new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }),
+    pitch: match.pitch || 'TBA',
+    homeTeam: {
+      id: match.home_team.id.toString(),
+      name: match.home_team.name,
+      initials: match.home_team.name.substring(0, 2).toUpperCase()
+    },
+    awayTeam: {
+      id: match.away_team.id.toString(),
+      name: match.away_team.name,
+      initials: match.away_team.name.substring(0, 2).toUpperCase()
+    },
+    status: 'upcoming' as const
+  }));
+
+  const results = completedMatches.map(match => ({
+    id: match.id.toString(),
+    time: new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }),
+    pitch: match.pitch || 'TBA',
+    homeTeam: {
+      id: match.home_team.id.toString(),
+      name: match.home_team.name,
+      initials: match.home_team.name.substring(0, 2).toUpperCase()
+    },
+    awayTeam: {
+      id: match.away_team.id.toString(),
+      name: match.away_team.name,
+      initials: match.away_team.name.substring(0, 2).toUpperCase()
+    },
+    homeScore: match.home_score,
+    awayScore: match.away_score,
+    status: 'completed' as const
+  }));
+
+  const formatDateRange = () => {
+    const start = formatDate(tournament.start_date);
+    const end = formatDate(tournament.end_date);
+    return `${start} - ${end}`;
+  };
+
+  // Create ticker items
+  const tickerItems = [
+    tournament.registration_deadline && { icon: "calendar", label: `Registration closes ${formatDate(tournament.registration_deadline)}` },
+    { icon: "users", label: "Referees provided" },
+    { icon: "trophy", label: "Trophies & medals" },
+    { label: `${tournament.team_min}-a-side` },
+    tournament.venue && { icon: "map", label: tournament.venue.name }
+  ].filter(Boolean) as Array<{ icon?: string; label: string }>;
+
+  // Extract WhatsApp number from URL if present
+  const whatsappNumber = tournament.whatsapp_url 
+    ? tournament.whatsapp_url.match(/wa\.me\/(\d+)/)?.[1] || '27123456789'
+    : '27123456789';
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+      {/* Tournament Navigation */}
+      <TournamentNav tournamentSlug={slug} />
+
       {/* Hero Section */}
-      <section className="relative h-screen w-full overflow-hidden">
-        {/* Background Image */}
-        {bannerImage ? (
-          <div 
-            className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: `url(${bannerImage})` }}
-          />
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900" />
-        )}
-        
-        {/* Overlay */}
-        <div className="hero-overlay" />
-        
-        {/* Content */}
-        <div className="relative h-full flex items-center">
+      <TournamentHero
+        name={tournament.name}
+        tagline={tournament.tagline}
+        city={tournament.city}
+        startDate={tournament.start_date}
+        endDate={tournament.end_date}
+        entryFee={formatCurrency(tournament.entry_fee)}
+        bannerImage={bannerImage}
+        logoUrl={tournament.logo_url}
+        status={tournamentStatus}
+        venueName={tournament.venue?.name || tournament.city}
+        mapLink={tournament.venue?.map_link}
+        onCTAClick={handleRegisterTeam}
+      />
+
+      {/* Live Ticker */}
+      <LiveTicker items={tickerItems} />
+
+      {/* Role Pill and Organiser/Manager Actions */}
+      {(tournamentRole?.is_organiser || tournamentRole?.is_manager) && (
+        <section className="section py-6">
           <div className="container">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-              {/* Left: Tournament Info */}
-              <div className="text-white">
-                <div className="mb-4">
-                  <button
-                    onClick={handleBackToLeagues}
-                    className="text-yellow-400 hover:text-yellow-300 font-medium mb-6"
-                  >
-                    ← Back to Tournaments
-                  </button>
-                </div>
-
-                <h1 className="text-4xl md:text-6xl font-bold mb-4">
-                  {tournament.name}
-                </h1>
-                
-                {tournament.tagline && (
-                  <p className="text-xl md:text-2xl text-yellow-300 mb-6">
-                    {tournament.tagline}
-                  </p>
+            <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-4">
+              {/* Role Pill */}
+              <div className="flex items-center gap-3">
+                {tournamentRole.is_organiser && (
+                  <span className="px-4 py-2 bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border border-yellow-500/50 rounded-full text-yellow-400 font-semibold text-sm">
+                    👑 Organiser
+                  </span>
                 )}
-
-                <div className="flex flex-wrap gap-3 mb-8">
-                  <span className="pill bg-yellow-500 text-black">
-                    📍 {tournament.city}
+                {tournamentRole.is_manager && !tournamentRole.is_organiser && (
+                  <span className="px-4 py-2 bg-gradient-to-r from-blue-500/20 to-blue-600/20 border border-blue-500/50 rounded-full text-blue-400 font-semibold text-sm">
+                    ⚽ Manager
                   </span>
-                  <span className="pill bg-white text-gray-900">
-                    📅 {formatDate(tournament.start_date)}
-                  </span>
-                  <span className="pill bg-green-500 text-white">
-                    💰 {formatCurrency(tournament.entry_fee)}
-                  </span>
-                </div>
-
-                <button
-                  onClick={handleRegisterTeam}
-                  className="btn-primary text-lg px-8 py-4 mb-4"
-                >
-                  Register Your Team
-                </button>
-
-                {tournament.organizer && (
-                  <p className="text-sm text-gray-300">
-                    Hosted by <span className="text-yellow-400">{tournament.organizer.username}</span>
-                  </p>
                 )}
               </div>
 
-              {/* Right: Logo */}
-              {tournament.logo_url && (
-                <div className="hidden lg:flex justify-center">
-                  <div className="w-48 h-48 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center p-8">
-                    <img 
-                      src={tournament.logo_url} 
-                      alt={`${tournament.name} logo`}
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
+              {/* Organiser Actions */}
+              {tournamentRole.is_organiser && tournament?.id && (
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => navigate(`/tournaments/${tournament.id}/edit`)}
+                    className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-white text-sm font-medium transition-colors"
+                  >
+                    ✏️ Edit Tournament
+                  </button>
+                  {arr(registrations).length >= (Number(tournament.team_max) || 0) && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await generateFixtures(tournament.id);
+                          alert('Fixtures generation triggered!');
+                          fetchTournament();
+                        } catch (err) {
+                          alert('Failed to generate fixtures');
+                        }
+                      }}
+                      className="px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-lg text-sm font-bold transition-colors"
+                    >
+                      🎯 Generate Fixtures
+                    </button>
+                  )}
+                  <button
+                    onClick={() => navigate(`/tournaments/${tournament.id}/fixtures`)}
+                    className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-white text-sm font-medium transition-colors"
+                  >
+                    📊 Manage Fixtures
+                  </button>
                 </div>
+              )}
+
+              {/* Manager Actions */}
+              {tournamentRole.is_manager && !tournamentRole.is_organiser && tournament?.id && (
+                <button
+                  onClick={() => {
+                    // Find the team this manager manages
+                    const managerTeam = arr(registrations).find((reg: any) => {
+                      const managerId = reg?.team?.manager?.id || reg?.team?.manager_user?.id;
+                      return managerId === user?.id;
+                    });
+                    if (managerTeam?.team?.id) {
+                      navigate(`/teams/${managerTeam.team.id}`);
+                    }
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg text-sm font-bold transition-colors"
+                >
+                  ⚽ Manage Team
+                </button>
               )}
             </div>
           </div>
-        </div>
-        
-        {/* Scroll indicator */}
-        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2">
-          <div className="animate-bounce">
-            <div className="w-6 h-10 border-2 border-white rounded-full flex items-start justify-center p-2">
-              <div className="w-1 h-3 bg-white rounded-full" />
-            </div>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
-      {/* Key Info Bar */}
-      <section className="bg-white border-b border-gray-200 sticky top-0 z-40 md:hidden">
-        <div className="container py-4">
-          <div className="flex items-center justify-between">
-            <div className="text-sm">
-              <div className="font-semibold">{formatDate(tournament.start_date)}</div>
-              <div className="text-gray-600">{tournament.venue?.name}</div>
-            </div>
-            {tournament.venue?.map_link && (
-              <a 
-                href={tournament.venue.map_link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-yellow-600 text-sm font-medium"
-              >
-                View on Map
-              </a>
-            )}
-          </div>
-          {daysUntilDeadline !== null && (
-            <div className="mt-2">
-              <span className={`text-sm font-medium ${getDeadlineColor(tournament.registration_deadline!)}`}>
-                Registration closes in {daysUntilDeadline} days
-              </span>
-            </div>
-          )}
-        </div>
-      </section>
+      {/* Overview Stats */}
+      <OverviewStats
+        teamsCount={registrations.length}
+        matchesPlayed={completedMatches.length}
+        upcomingMatches={upcomingMatches.length}
+        entryFee={formatCurrency(tournament.entry_fee)}
+      />
+
+      {/* Key Info Grid */}
+      <KeyInfoGrid
+        location={tournament.city}
+        venueName={tournament.venue?.name}
+        duration={formatDateRange()}
+        teamCapacity={tournament.team_max}
+        entryFee={formatCurrency(tournament.entry_fee)}
+      />
+
+      {/* Tournament Tabs */}
+      <TournamentTabs
+        teams={teams}
+        fixtures={fixtures}
+        results={results}
+        leaderboard={standings.map((s: any) => ({
+          position: s.position,
+          team: {
+            id: String(s.team.id),
+            name: s.team.name || 'Unknown',
+            initials: (s.team.name || 'UN').substring(0, 2).toUpperCase()
+          },
+          played: s.played || 0,
+          won: s.won || 0,
+          drawn: s.drawn || 0,
+          lost: s.lost || 0,
+          points: s.points || 0
+        }))}
+        topScorers={topScorers.map((s: any) => ({
+          name: s.name || 'Unknown',
+          team: s.team || 'Unknown',
+          goals: s.goals || 0
+        }))}
+        isOrganiser={false}
+        onAddTeam={handleRegisterTeam}
+        onAddMatch={() => navigate(`/tournaments/${tournament.id}/fixtures`)}
+        onUpdateScore={() => navigate(`/tournaments/${tournament.id}/fixtures`)}
+        onViewTeam={(teamId) => navigate(`/teams/${teamId}`)}
+      />
 
       {/* About Section */}
       {tournament.description && (
-        <section className="section bg-gray-50">
+        <section className="section bg-gradient-to-b from-gray-800 to-gray-900">
           <div className="container">
             <div className="max-w-4xl mx-auto">
-              <h2 className="section-title text-center mb-8">About This Tournament</h2>
-              <div className="card">
-                <p className="text-gray-700 leading-relaxed">{tournament.description}</p>
+              <h2 className="section-title text-center mb-8 text-white">About This Tournament</h2>
+              <div className="card bg-gray-800 border-gray-700">
+                <p className="text-gray-300 leading-relaxed">{tournament.description}</p>
               </div>
             </div>
           </div>
@@ -267,11 +386,11 @@ const TournamentBySlug: React.FC = () => {
 
       {/* Rules & Format */}
       {tournament.rules_md && (
-        <section className="section bg-white">
+        <section className="section bg-gray-900">
           <div className="container">
             <div className="max-w-4xl mx-auto">
-              <h2 className="section-title text-center mb-8">Rules & Format</h2>
-              <div className="card">
+              <h2 className="section-title text-center mb-8 text-white">Rules & Format</h2>
+              <div className="card bg-gray-800 border-gray-700">
                 <Markdown content={tournament.rules_md} />
               </div>
             </div>
@@ -281,11 +400,11 @@ const TournamentBySlug: React.FC = () => {
 
       {/* Prizes */}
       {tournament.prizes_md && (
-        <section className="section bg-yellow-50">
+        <section className="section bg-gray-800">
           <div className="container">
             <div className="max-w-4xl mx-auto">
-              <h2 className="section-title text-center mb-8">Prizes</h2>
-              <div className="card">
+              <h2 className="section-title text-center mb-8 text-white">Prizes</h2>
+              <div className="card bg-gray-900 border-yellow-500/20">
                 <Markdown content={tournament.prizes_md} />
               </div>
             </div>
@@ -295,136 +414,28 @@ const TournamentBySlug: React.FC = () => {
 
       {/* Gallery */}
       {galleryImages.length > 0 && (
-        <section className="section bg-gray-50">
-          <div className="container">
-            <div className="max-w-6xl mx-auto">
-              <h2 className="section-title text-center mb-8">Gallery</h2>
-              <div className="gallery-grid">
-                {galleryImages.map((url, index) => (
-                  <div key={index} className="aspect-square rounded-lg overflow-hidden">
-                    <img 
-                      src={url} 
-                      alt={`Gallery image ${index + 1}`}
-                      className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
+        <Gallery galleryUrls={galleryImages} />
       )}
 
       {/* Sponsors */}
       {sponsors.length > 0 && (
-        <section className="section bg-white">
-          <div className="container">
-            <div className="max-w-4xl mx-auto">
-              <h2 className="section-title text-center mb-8">Our Sponsors</h2>
-              <div className="sponsor-strip">
-                {sponsors.map((sponsor, index) => (
-                  <div key={index} className="flex flex-col items-center">
-                    {sponsor.logo && (
-                      <img 
-                        src={sponsor.logo} 
-                        alt={sponsor.name}
-                        className="sponsor-logo mb-2"
-                      />
-                    )}
-                    <span className="text-sm text-gray-600">{sponsor.name}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
+        <SponsorsMarquee 
+          sponsors={sponsors.map(s => ({ name: s.name, logoUrl: s.logo }))} 
+        />
       )}
 
-      {/* Contact & Share */}
-      <section className="section bg-gray-900 text-white">
-        <div className="container">
-          <div className="max-w-4xl mx-auto text-center">
-            <h2 className="section-title text-white mb-8">Contact & Share</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-              {/* Contact Info */}
-              <div className="space-y-4">
-                {tournament.contact_email && (
-                  <div className="flex items-center justify-center space-x-3">
-                    <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                    <a href={`mailto:${tournament.contact_email}`} className="text-yellow-400 hover:text-yellow-300">
-                      {tournament.contact_email}
-                    </a>
-                  </div>
-                )}
-                
-                {tournament.contact_phone && (
-                  <div className="flex items-center justify-center space-x-3">
-                    <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                    </svg>
-                    <a href={`tel:${tournament.contact_phone}`} className="text-yellow-400 hover:text-yellow-300">
-                      {tournament.contact_phone}
-                    </a>
-                  </div>
-                )}
-              </div>
-
-              {/* Share Button */}
-              <div className="flex justify-center">
-                <button
-                  onClick={handleShare}
-                  className="btn-outline border-white text-white hover:bg-white hover:text-black"
-                >
-                  Share Tournament
-                </button>
-              </div>
-            </div>
-
-            {/* WhatsApp Button */}
-            {tournament.whatsapp_url && (
-              <div className="mb-8">
-                <a 
-                  href={tournament.whatsapp_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-primary bg-green-500 hover:bg-green-600"
-                >
-                  💬 Contact on WhatsApp
-                </a>
-              </div>
-            )}
-
-            {/* Final CTA */}
-            <div className="pt-8 border-t border-gray-700">
-              <button
-                onClick={handleRegisterTeam}
-                className="btn-primary text-lg px-8 py-4"
-              >
-                Register Your Team Now
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* Contact Bar */}
+      <ContactBar
+        email={tournament.contact_email}
+        phone={tournament.contact_phone}
+        whatsappNumber={whatsappNumber}
+      />
 
       {/* Mobile Sticky CTA */}
-      <div className="sticky-cta">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm text-gray-600">Entry Fee</div>
-            <div className="font-bold text-green-600">{formatCurrency(tournament.entry_fee)}</div>
-          </div>
-          <button
-            onClick={handleRegisterTeam}
-            className="btn-primary"
-          >
-            Register Team
-          </button>
-        </div>
-      </div>
+      <MobileStickyCTA
+        entryFee={formatCurrency(tournament.entry_fee)}
+        onRegisterClick={handleRegisterTeam}
+      />
     </div>
   );
 };

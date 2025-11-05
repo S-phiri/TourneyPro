@@ -1,46 +1,37 @@
-import React from 'react';
-import { motion } from 'framer-motion';
+import { motion } from "framer-motion";
 
 interface TeamChipProps {
   name: string;
-  initials?: string;
   crest?: string;
-  size?: 'sm' | 'md' | 'lg';
+  initials?: string;
+  size?: "sm" | "md" | "lg";
 }
 
-const TeamChip: React.FC<TeamChipProps> = ({ 
-  name, 
-  initials, 
+export default function TeamChip({ 
+  name = "Team Name", 
   crest, 
-  size = 'md' 
-}) => {
+  initials = "TN",
+  size = "md" 
+}: TeamChipProps) {
   const sizeClasses = {
-    sm: 'w-8 h-8 text-xs',
-    md: 'w-10 h-10 text-sm',
-    lg: 'w-12 h-12 text-base'
+    sm: "h-6 w-6 text-xs",
+    md: "h-8 w-8 text-sm",
+    lg: "h-10 w-10 text-base"
   };
 
   return (
-    <motion.div 
-      className="flex items-center space-x-2"
+    <motion.div
       whileHover={{ scale: 1.05 }}
-      transition={{ type: "spring", stiffness: 400, damping: 17 }}
+      className="flex items-center gap-2 bg-zinc-900/50 border border-zinc-800 rounded-full px-3 py-1.5 backdrop-blur-sm"
     >
-      <div className={`flex items-center justify-center rounded-full bg-yellow-100 border-2 border-yellow-500 ${sizeClasses[size]}`}>
+      <div className={`${sizeClasses[size]} rounded-full bg-gradient-to-br from-yellow-500 to-yellow-600 flex items-center justify-center font-bold text-black overflow-hidden`}>
         {crest ? (
-          <img src={crest} alt={name} className="w-full h-full rounded-full object-cover" />
+          <img src={crest} alt={name} className="w-full h-full object-cover" />
         ) : (
-          <span className="font-bold text-yellow-700">
-            {initials || name.substring(0, 2).toUpperCase()}
-          </span>
+          <span>{initials}</span>
         )}
       </div>
-      <span className={`font-medium text-gray-900 ${size === 'sm' ? 'text-xs' : size === 'md' ? 'text-sm' : 'text-base'}`}>
-        {name}
-      </span>
+      <span className="text-white font-medium text-sm">{name}</span>
     </motion.div>
   );
-};
-
-export default TeamChip;
-
+}

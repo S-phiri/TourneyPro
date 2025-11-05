@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.conf import settings
 
 class Venue(models.Model):
     name = models.CharField(max_length=120)
@@ -11,6 +12,12 @@ class Venue(models.Model):
 
 class Tournament(models.Model):
     STATUS_CHOICES = [("draft","Draft"),("open","Open"),("closed","Closed"),("completed","Completed")]
+    FORMAT_CHOICES = [
+        ("knockout", "Knock-out"),
+        ("league", "League / Round Robin"),
+        ("combination", "Combination"),
+        ("challenge", "Challenge")
+    ]
     name = models.CharField(max_length=160)
     description = models.TextField(blank=True)
     city = models.CharField(max_length=120)
@@ -19,9 +26,10 @@ class Tournament(models.Model):
     entry_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     team_min = models.PositiveIntegerField(default=6)
     team_max = models.PositiveIntegerField(default=10)
-    venue = models.ForeignKey(Venue, on_delete=models.PROTECT, related_name="tournaments")
+    venue = models.ForeignKey(Venue, on_delete=models.PROTECT, related_name="tournaments", null=True, blank=True)
     organizer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="organized_tournaments", null=True, blank=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="open")
+    format = models.CharField(max_length=16, choices=FORMAT_CHOICES, default="league")
     hero_image = models.URLField(blank=True)
     
     # New optional marketing/branding fields
@@ -37,6 +45,10 @@ class Tournament(models.Model):
     whatsapp_url = models.URLField(blank=True)   # e.g. https://wa.me/...
     registration_deadline = models.DateField(null=True, blank=True)
     published = models.BooleanField(default=True)
+    
+    # Wizard-specific fields for rules and structure configuration
+    rules = models.JSONField(default=dict, blank=True)  # {win_pts, draw_pts, loss_pts, tiebreakers, max_players, duration_mins, extra_time, pens}
+    structure = models.JSONField(default=dict, blank=True)  # {rounds, groups, knockout} - format-specific config
 
     def __str__(self): return self.name
 
@@ -45,8 +57,20 @@ class Team(models.Model):
     manager_name = models.CharField(max_length=160)
     manager_email = models.EmailField()
     phone = models.CharField(max_length=40, blank=True)
+    # Optional manager user link (additive)
+    manager_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='managed_teams')
+    # Simple derived metrics (additive)
+    wins = models.PositiveIntegerField(default=0)
+    draws = models.PositiveIntegerField(default=0)
+    losses = models.PositiveIntegerField(default=0)
+    goals_for = models.PositiveIntegerField(default=0)
+    goals_against = models.PositiveIntegerField(default=0)
 
     def __str__(self): return self.name
+
+    @property
+    def points(self):
+        return self.wins * 3 + self.draws
 
 class Registration(models.Model):
     STATUS_CHOICES = [("pending","Pending"),("paid","Paid"),("cancelled","Cancelled")]
@@ -61,6 +85,54 @@ class Registration(models.Model):
             models.UniqueConstraint(fields=["team", "tournament"], name="unique_team_per_tournament")
         ]
 
+# Fixtures generation hook (simple; can be expanded)
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+@receiver(post_save, sender=Registration)
+def maybe_generate_fixtures(sender, instance, created, **kwargs):
+    if not created:
+        return
+    t = instance.tournament
+    count = t.registrations.filter(status__in=["pending","paid"]).count()
+    try:
+        if count >= t.team_max and not t.matches.exists():
+            generate_round_robin_fixtures(t)
+    except Exception:
+        # do not crash registration flow if generation fails
+        pass
+
+def generate_round_robin_fixtures(tournament):
+    teams = list(Team.objects.filter(registrations__tournament=tournament).distinct())
+    if len(teams) < 2:
+        return
+    # Add bye if odd
+    if len(teams) % 2 == 1:
+        teams.append(None)
+    n = len(teams)
+    rounds = n - 1
+    half = n // 2
+    from datetime import datetime, timedelta
+    start = datetime.combine(tournament.start_date, datetime.min.time())
+    arr = teams[:]
+    for r in range(rounds):
+        for i in range(half):
+            t1 = arr[i]
+            t2 = arr[n - 1 - i]
+            if t1 is None or t2 is None:
+                continue
+            kickoff = start + timedelta(hours=r * 2 + i)
+            Match.objects.create(
+                tournament=tournament,
+                home_team=t1,
+                away_team=t2,
+                kickoff_at=kickoff,
+                pitch="",
+                status="scheduled",
+            )
+        # rotate preserving first element
+        arr = [arr[0]] + [arr[-1]] + arr[1:-1]
+
 class Match(models.Model):
     STATUS_CHOICES=[("scheduled","Scheduled"),("finished","Finished")]
     tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE, related_name="matches")
@@ -71,3 +143,29 @@ class Match(models.Model):
     home_score = models.PositiveIntegerField(default=0)
     away_score = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="scheduled")
+
+# New additive player structures
+class Player(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='players')
+    first_name = models.CharField(max_length=120)
+    last_name = models.CharField(max_length=120, blank=True)
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    goals = models.PositiveIntegerField(default=0)
+    assists = models.PositiveIntegerField(default=0)
+    clean_sheets = models.PositiveIntegerField(default=0)
+    appearances = models.PositiveIntegerField(default=0)
+    position = models.CharField(max_length=30, blank=True)
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name}".strip()
+
+class TeamPlayer(models.Model):
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='memberships')
+    player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name='memberships')
+    number = models.PositiveIntegerField(null=True, blank=True)
+    is_captain = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ('team', 'player')
+

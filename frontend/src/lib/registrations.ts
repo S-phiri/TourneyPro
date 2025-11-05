@@ -1,12 +1,22 @@
 // src/lib/registrations.ts
 import { api } from './api';
 
+export interface Manager {
+  id: number;
+  username: string;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+}
+
 export interface Team {
   id: number;
   name: string;
   manager_name: string;
   manager_email: string;
   phone?: string;
+  manager?: Manager;
+  manager_user?: Manager;
 }
 
 export interface Registration {
