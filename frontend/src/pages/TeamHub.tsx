@@ -1,12 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getTeam, listTeamPlayers, listMatches, api } from '../lib/api';
 import { motion } from 'framer-motion';
-import { Users, Trophy, Calendar, DollarSign, MapPin, PlusCircle, Edit, ArrowLeft, Award, Goal, Shield } from 'lucide-react';
+import { Users, Trophy, Calendar, DollarSign, MapPin, PlusCircle, Edit, ArrowLeft, Award, Goal, Shield, TrendingUp, BarChart3 } from 'lucide-react';
 import TeamChip from '../components/tournament/TeamChip';
 import { formatDate } from '../lib/helpers';
 import { useAuth } from '../context/AuthContext';
 import TournamentNav from '../components/tournament/TournamentNav';
+// NEW: Import stats utilities and components
+import { computeAllTeamStats } from '../utils/computeStats';
+import StatCard from '../components/stats/StatCard';
+import TopPerformers from '../components/stats/TopPerformers';
 
 export default function TeamHub() {
   const { id } = useParams<{ id: string }>();
@@ -20,7 +24,8 @@ export default function TeamHub() {
   const [tournamentId, setTournamentId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'fixtures'>('overview');
+  // NEW: Added 'stats' tab
+  const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'fixtures' | 'stats'>('overview');
   
   // Check if current user is the team manager
   // TeamSerializer returns 'manager' not 'manager_user'
@@ -69,6 +74,13 @@ export default function TeamHub() {
     load();
   }, [teamIdNum]);
 
+  // NEW: Compute derived statistics - must be before early returns (React Hooks rules)
+  const computedStats = useMemo(() => {
+    if (!team || !fixtures || !players) return null;
+    const teamPlayersList = players || [];
+    return computeAllTeamStats(fixtures, teamIdNum, teamPlayersList, team);
+  }, [fixtures, players, team, teamIdNum]);
+
   if (loading || authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800 flex items-center justify-center">
@@ -100,7 +112,65 @@ export default function TeamHub() {
   const teamInitials = (team.name || 'TE').substring(0, 2).toUpperCase();
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800 text-white">
+    <div className="min-h-screen relative text-white">
+      {/* Background Gradient - Lighter black */}
+      <div className="fixed inset-0 bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 -z-10" />
+      
+      {/* Subtle Football Field Lines Background */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[1] opacity-10">
+        <svg className="absolute inset-0 w-full h-full" style={{ mixBlendMode: 'overlay' }}>
+          {/* Center circle */}
+          <circle cx="50%" cy="50%" r="15%" fill="none" stroke="rgba(234, 179, 8, 0.3)" strokeWidth="1" />
+          {/* Center line */}
+          <line x1="50%" y1="0" x2="50%" y2="100%" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          {/* Penalty boxes */}
+          <rect x="0" y="30%" width="20%" height="40%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          <rect x="80%" y="30%" width="20%" height="40%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          {/* Goal boxes */}
+          <rect x="0" y="40%" width="8%" height="20%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          <rect x="92%" y="40%" width="8%" height="20%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+        </svg>
+      </div>
+      
+      {/* Subtle Faint Lights */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[1]">
+        {[...Array(30)].map((_, i) => {
+          const baseX = (i * 6) % 100;
+          const baseY = (i * 8) % 100;
+          const size = 2 + (i % 2); // 2-3px - much smaller
+          const duration = 4 + (i % 3);
+          const delay = (i * 0.2) % 2;
+          
+          return (
+            <motion.div
+              key={i}
+              className="absolute rounded-full"
+              style={{
+                left: `${baseX}%`,
+                top: `${baseY}%`,
+                width: `${size}px`,
+                height: `${size}px`,
+                background: 'rgba(234, 179, 8, 0.3)',
+                boxShadow: '0 0 4px rgba(234, 179, 8, 0.4)',
+              }}
+              initial={{
+                opacity: 0.2,
+              }}
+              animate={{
+                opacity: [0.2, 0.4, 0.2],
+                scale: [1, 1.2, 1],
+              }}
+              transition={{
+                duration: duration,
+                repeat: Infinity,
+                ease: "easeInOut",
+                delay: delay,
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="relative z-10">
       {/* Tournament Navigation */}
       <TournamentNav tournamentId={tournamentId || undefined} showBackButton={true} />
 
@@ -128,7 +198,7 @@ export default function TeamHub() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"
+          className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 md:gap-6 mb-8"
         >
           <div className="bg-gradient-to-br from-zinc-900 to-black border border-yellow-500/20 rounded-xl p-6 text-center hover:border-yellow-500/50 transition-all">
             <Users className="w-8 h-8 text-yellow-500 mx-auto mb-3" />
@@ -203,6 +273,25 @@ export default function TeamHub() {
                 />
               )}
             </button>
+            {/* NEW: Stats tab */}
+            <button
+              onClick={() => setActiveTab('stats')}
+              className={`px-8 py-4 text-white font-semibold whitespace-nowrap transition-colors hover:bg-zinc-800/50 relative ${
+                activeTab === 'stats' ? 'text-yellow-500' : ''
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4" />
+                Stats
+              </div>
+              {activeTab === 'stats' && (
+                <motion.div
+                  layoutId="activeTab"
+                  className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-yellow-500 to-yellow-600"
+                  transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                />
+              )}
+            </button>
           </div>
 
           {/* Tab Content */}
@@ -237,6 +326,15 @@ export default function TeamHub() {
                         <p className="text-sm text-gray-400 mt-1">
                           {upcomingMatches[0].kickoff_at ? formatDate(upcomingMatches[0].kickoff_at) : 'TBC'} at {upcomingMatches[0].pitch || 'TBC'}
                         </p>
+                        {/* NEW: View Fixture link */}
+                        {upcomingMatches[0].id && tournamentId && (
+                          <button
+                            onClick={() => navigate(`/tournaments/${tournamentId}/fixtures`)}
+                            className="text-yellow-500 text-sm hover:text-yellow-400 hover:underline mt-2 flex items-center gap-1"
+                          >
+                            View Fixture →
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -318,6 +416,84 @@ export default function TeamHub() {
               </motion.div>
             )}
 
+            {/* NEW: Stats tab content */}
+            {activeTab === 'stats' && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-8"
+              >
+                <div>
+                  <h3 className="text-2xl font-bold text-white mb-6">Team Summary</h3>
+                  {computedStats ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                      <StatCard
+                        icon={Calendar}
+                        label="Played"
+                        value={computedStats.played}
+                      />
+                      <StatCard
+                        icon={Trophy}
+                        label="Wins"
+                        value={computedStats.wins}
+                        subValue={`${computedStats.played > 0 ? ((computedStats.wins / computedStats.played) * 100).toFixed(0) : 0}% win rate`}
+                      />
+                      <StatCard
+                        label="Draws"
+                        value={computedStats.draws}
+                      />
+                      <StatCard
+                        label="Losses"
+                        value={computedStats.losses}
+                      />
+                      <StatCard
+                        icon={Award}
+                        label="Points"
+                        value={computedStats.points}
+                      />
+                      <StatCard
+                        icon={Goal}
+                        label="Goals For"
+                        value={computedStats.goalsFor}
+                        subValue={`${computedStats.goalsPerMatch.toFixed(1)} per match`}
+                      />
+                      <StatCard
+                        label="Goals Against"
+                        value={computedStats.goalsAgainst}
+                        subValue={`${computedStats.goalsAgainstPerMatch.toFixed(1)} per match`}
+                      />
+                      <StatCard
+                        icon={TrendingUp}
+                        label="Goal Difference"
+                        value={computedStats.goalDifference >= 0 ? `+${computedStats.goalDifference}` : computedStats.goalDifference}
+                        className={computedStats.goalDifference >= 0 ? 'border-green-500/30' : 'border-red-500/30'}
+                      />
+                      <StatCard
+                        icon={Shield}
+                        label="Clean Sheets"
+                        value={computedStats.cleanSheets}
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-center py-12 bg-zinc-800/30 border border-zinc-700 rounded-lg">
+                      <p className="text-gray-400 text-lg">No statistics available yet.</p>
+                      <p className="text-gray-500 text-sm mt-2">Statistics will appear after matches have been played.</p>
+                    </div>
+                  )}
+                </div>
+
+                {computedStats && computedStats.topPerformers.length > 0 && (
+                  <div>
+                    <h3 className="text-2xl font-bold text-white mb-6">Top Performers</h3>
+                    <TopPerformers
+                      performers={computedStats.topPerformers}
+                      onPlayerClick={(playerId) => navigate(`/players/${playerId}`)}
+                    />
+                  </div>
+                )}
+              </motion.div>
+            )}
+
             {activeTab === 'fixtures' && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -347,7 +523,7 @@ export default function TeamHub() {
                             </p>
                           </div>
                           <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                            match.status === 'finished' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400'
+                            match.status === 'finished' ? 'bg-green-500/20 text-green-400' : 'bg-zinc-500/20 text-zinc-400'
                           }`}>
                             {match.status?.toUpperCase() || 'SCHEDULED'}
                           </span>
@@ -373,6 +549,7 @@ export default function TeamHub() {
             )}
           </div>
         </motion.div>
+      </div>
       </div>
     </div>
   );

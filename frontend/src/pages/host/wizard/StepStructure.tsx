@@ -9,15 +9,26 @@ interface StepStructureProps {
 export default function StepStructure({ state, updateState }: StepStructureProps) {
   // Initialize default structure values when format changes
   useEffect(() => {
+    const teamCapacity = state.basics.team_capacity || 8;
+    
     if (state.format === 'league' && !state.structure.rounds) {
       updateState({
         structure: { ...state.structure, rounds: 1 },
       });
     } else if (state.format === 'knockout' && !state.structure.knockout) {
+      // Auto-set bracket size to match team capacity
       updateState({
         structure: {
           ...state.structure,
-          knockout: { bracket_size: 8, single_leg: true, third_place: false },
+          knockout: { bracket_size: teamCapacity, single_leg: true, third_place: false },
+        },
+      });
+    } else if (state.format === 'knockout' && state.structure.knockout && state.structure.knockout.bracket_size !== teamCapacity) {
+      // Update bracket size if team capacity changed
+      updateState({
+        structure: {
+          ...state.structure,
+          knockout: { ...state.structure.knockout, bracket_size: teamCapacity },
         },
       });
     } else if (state.format === 'combination' && (!state.structure.groups || !state.structure.knockout)) {
@@ -31,7 +42,7 @@ export default function StepStructure({ state, updateState }: StepStructureProps
             seeding: 'random',
           },
           knockout: state.structure.knockout || {
-            bracket_size: 8,
+            bracket_size: Math.min(teamCapacity, 16), // Use team capacity or max 16 for combination
             single_leg: true,
             third_place: false,
           },
@@ -39,7 +50,7 @@ export default function StepStructure({ state, updateState }: StepStructureProps
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.format]); // Only run when format changes
+  }, [state.format, state.basics.team_capacity]); // Run when format or team capacity changes
   const handleStructureChange = (field: string, value: any) => {
     updateState({
       structure: {
@@ -107,137 +118,48 @@ export default function StepStructure({ state, updateState }: StepStructureProps
         )}
 
         {/* Knockout Format */}
-        {state.format === 'knockout' && (
-          <div>
-            <h3 className="text-xl font-bold text-white mb-4">Knockout Bracket Settings</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="form-label text-white">Bracket Size</label>
-                <select
-                  value={state.structure.knockout?.bracket_size || 8}
-                  onChange={(e) =>
-                    handleKnockoutChange('bracket_size', parseInt(e.target.value))
-                  }
-                  className="form-input bg-zinc-800 border-zinc-600 text-white"
-                >
-                  <option value={4}>4 Teams</option>
-                  <option value={8}>8 Teams</option>
-                  <option value={16}>16 Teams</option>
-                  <option value={32}>32 Teams</option>
-                </select>
-                <p className="text-xs text-gray-400 mt-1">
-                  Number of teams in the knockout bracket
-                </p>
-              </div>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={state.structure.knockout?.single_leg ?? true}
-                  onChange={(e) => handleKnockoutChange('single_leg', e.target.checked)}
-                  className="w-5 h-5 text-yellow-600 bg-zinc-800 border-zinc-600 rounded"
-                />
-                <span className="text-white">Single Leg (one match per round)</span>
-              </label>
-
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={state.structure.knockout?.third_place ?? false}
-                  onChange={(e) => handleKnockoutChange('third_place', e.target.checked)}
-                  className="w-5 h-5 text-yellow-600 bg-zinc-800 border-zinc-600 rounded"
-                />
-                <span className="text-white">Third Place Match</span>
-              </label>
-            </div>
-          </div>
-        )}
-
-        {/* Combination Format */}
-        {state.format === 'combination' && (
-          <div className="space-y-8">
-            {/* Groups Section */}
+        {state.format === 'knockout' && (() => {
+          const teamCapacity = state.basics.team_capacity || 8;
+          // Generate bracket size options: include team capacity and standard power-of-2 options
+          const bracketOptions = [];
+          const standardSizes = [4, 8, 16, 32];
+          
+          // Add team capacity if it's not already in standard sizes
+          if (!standardSizes.includes(teamCapacity)) {
+            bracketOptions.push(teamCapacity);
+          }
+          
+          // Add standard sizes that are <= team capacity
+          standardSizes.forEach(size => {
+            if (size <= teamCapacity && !bracketOptions.includes(size)) {
+              bracketOptions.push(size);
+            }
+          });
+          
+          // Sort options
+          bracketOptions.sort((a, b) => a - b);
+          
+          return (
             <div>
-              <h3 className="text-xl font-bold text-white mb-4">Group Stage Settings</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="form-label text-white">Teams Per Group</label>
-                  <select
-                    value={state.structure.groups?.teams_per_group || 4}
-                    onChange={(e) =>
-                      handleGroupsChange('teams_per_group', parseInt(e.target.value))
-                    }
-                    className="form-input bg-zinc-800 border-zinc-600 text-white"
-                  >
-                    <option value={4}>4 Teams</option>
-                    <option value={5}>5 Teams</option>
-                    <option value={6}>6 Teams</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="form-label text-white">Rounds Per Group</label>
-                  <select
-                    value={state.structure.groups?.rounds_per_group || 1}
-                    onChange={(e) =>
-                      handleGroupsChange('rounds_per_group', parseInt(e.target.value))
-                    }
-                    className="form-input bg-zinc-800 border-zinc-600 text-white"
-                  >
-                    <option value={1}>1 Round</option>
-                    <option value={2}>2 Rounds</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="form-label text-white">Teams Advancing Per Group</label>
-                  <select
-                    value={state.structure.groups?.advance_per_group || 2}
-                    onChange={(e) =>
-                      handleGroupsChange('advance_per_group', parseInt(e.target.value))
-                    }
-                    className="form-input bg-zinc-800 border-zinc-600 text-white"
-                  >
-                    <option value={1}>1 Team (Winner)</option>
-                    <option value={2}>2 Teams (Top 2)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="form-label text-white">Seeding Method</label>
-                  <select
-                    value={state.structure.groups?.seeding || 'random'}
-                    onChange={(e) =>
-                      handleGroupsChange('seeding', e.target.value as 'random' | 'pots')
-                    }
-                    className="form-input bg-zinc-800 border-zinc-600 text-white"
-                  >
-                    <option value="random">Random</option>
-                    <option value="pots">Seeded Pots</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Knockout Section */}
-            <div className="pt-8 border-t border-zinc-700">
-              <h3 className="text-xl font-bold text-white mb-4">Knockout Stage Settings</h3>
+              <h3 className="text-xl font-bold text-white mb-4">Knockout Bracket Settings</h3>
               <div className="space-y-4">
                 <div>
                   <label className="form-label text-white">Bracket Size</label>
                   <select
-                    value={state.structure.knockout?.bracket_size || 8}
+                    value={state.structure.knockout?.bracket_size || teamCapacity}
                     onChange={(e) =>
                       handleKnockoutChange('bracket_size', parseInt(e.target.value))
                     }
                     className="form-input bg-zinc-800 border-zinc-600 text-white"
                   >
-                    <option value={4}>4 Teams</option>
-                    <option value={8}>8 Teams</option>
-                    <option value={16}>16 Teams</option>
+                    {bracketOptions.map(size => (
+                      <option key={size} value={size}>
+                        {size} {size === teamCapacity ? '(Matches Team Capacity)' : 'Teams'}
+                      </option>
+                    ))}
                   </select>
                   <p className="text-xs text-gray-400 mt-1">
-                    Should match number of advancing teams from groups
+                    Number of teams in the knockout bracket (based on your team capacity: {teamCapacity} teams)
                   </p>
                 </div>
 
@@ -248,7 +170,7 @@ export default function StepStructure({ state, updateState }: StepStructureProps
                     onChange={(e) => handleKnockoutChange('single_leg', e.target.checked)}
                     className="w-5 h-5 text-yellow-600 bg-zinc-800 border-zinc-600 rounded"
                   />
-                  <span className="text-white">Single Leg</span>
+                  <span className="text-white">Single Leg (one match per round)</span>
                 </label>
 
                 <label className="flex items-center gap-3 cursor-pointer">
@@ -262,6 +184,245 @@ export default function StepStructure({ state, updateState }: StepStructureProps
                 </label>
               </div>
             </div>
+          );
+        })()}
+
+        {/* Combination Format */}
+        {state.format === 'combination' && (
+          <div className="space-y-8">
+            {/* Show different settings based on combination type */}
+            {state.structure?.combination_type === 'combinationB' ? (
+              /* Groups → Knockout (World Cup style) - Show Group Settings */
+              <>
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-4">Group Stage Settings</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="form-label text-white">Teams Per Group</label>
+                      <select
+                        value={state.structure.groups?.teams_per_group || 4}
+                        onChange={(e) =>
+                          handleGroupsChange('teams_per_group', parseInt(e.target.value))
+                        }
+                        className="form-input bg-zinc-800 border-zinc-600 text-white"
+                      >
+                        <option value={4}>4 Teams</option>
+                        <option value={5}>5 Teams</option>
+                        <option value={6}>6 Teams</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label text-white">Rounds Per Group</label>
+                      <select
+                        value={state.structure.groups?.rounds_per_group || 1}
+                        onChange={(e) =>
+                          handleGroupsChange('rounds_per_group', parseInt(e.target.value))
+                        }
+                        className="form-input bg-zinc-800 border-zinc-600 text-white"
+                      >
+                        <option value={1}>1 Round</option>
+                        <option value={2}>2 Rounds</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label text-white">Teams Advancing Per Group</label>
+                      <select
+                        value={state.structure.groups?.advance_per_group || 2}
+                        onChange={(e) =>
+                          handleGroupsChange('advance_per_group', parseInt(e.target.value))
+                        }
+                        className="form-input bg-zinc-800 border-zinc-600 text-white"
+                      >
+                        <option value={1}>1 Team (Winner)</option>
+                        <option value={2}>2 Teams (Top 2)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="form-label text-white">Seeding Method</label>
+                      <select
+                        value={state.structure.groups?.seeding || 'random'}
+                        onChange={(e) =>
+                          handleGroupsChange('seeding', e.target.value as 'random' | 'pots')
+                        }
+                        className="form-input bg-zinc-800 border-zinc-600 text-white"
+                      >
+                        <option value="random">Random</option>
+                        <option value="pots">Seeded Pots</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-8 border-t border-zinc-700">
+                  <h3 className="text-xl font-bold text-white mb-4">Knockout Stage Settings</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="form-label text-white">Bracket Size</label>
+                      {(() => {
+                        const teamCapacity = state.basics.team_capacity || 8;
+                        // For combination, calculate expected qualifiers
+                        const teamsPerGroup = state.structure.groups?.teams_per_group || 4;
+                        const advancePerGroup = state.structure.groups?.advance_per_group || 2;
+                        // Estimate number of groups
+                        const numGroups = Math.ceil(teamCapacity / teamsPerGroup);
+                        const expectedQualifiers = numGroups * advancePerGroup;
+                        
+                        // Generate options based on expected qualifiers
+                        const bracketOptions = [];
+                        const standardSizes = [4, 8, 16];
+                        
+                        if (!standardSizes.includes(expectedQualifiers) && expectedQualifiers <= teamCapacity) {
+                          bracketOptions.push(expectedQualifiers);
+                        }
+                        
+                        standardSizes.forEach(size => {
+                          if (size <= teamCapacity && !bracketOptions.includes(size)) {
+                            bracketOptions.push(size);
+                          }
+                        });
+                        
+                        bracketOptions.sort((a, b) => a - b);
+                        
+                        return (
+                          <select
+                            value={state.structure.knockout?.bracket_size || expectedQualifiers}
+                            onChange={(e) =>
+                              handleKnockoutChange('bracket_size', parseInt(e.target.value))
+                            }
+                            className="form-input bg-zinc-800 border-zinc-600 text-white"
+                          >
+                            {bracketOptions.map(size => (
+                              <option key={size} value={size}>
+                                {size} {size === expectedQualifiers ? `(Expected: ${numGroups} groups × ${advancePerGroup} teams)` : 'Teams'}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
+                      <p className="text-xs text-gray-400 mt-1">
+                        Should match number of advancing teams from groups
+                      </p>
+                    </div>
+
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={state.structure.knockout?.single_leg ?? true}
+                        onChange={(e) => handleKnockoutChange('single_leg', e.target.checked)}
+                        className="w-5 h-5 text-yellow-600 bg-zinc-800 border-zinc-600 rounded"
+                      />
+                      <span className="text-white">Single Leg</span>
+                    </label>
+
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={state.structure.knockout?.third_place ?? false}
+                        onChange={(e) => handleKnockoutChange('third_place', e.target.checked)}
+                        className="w-5 h-5 text-yellow-600 bg-zinc-800 border-zinc-600 rounded"
+                      />
+                      <span className="text-white">Third Place Match</span>
+                    </label>
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* League → Knockout (Champions League style) - Show League Settings */
+              <>
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-4">League Stage Settings</h3>
+                  <p className="text-gray-400 mb-4">
+                    All teams play in one league table. Top teams advance to knockout stage.
+                  </p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="form-label text-white">Number of Rounds</label>
+                      <select
+                        value={state.structure.rounds || 1}
+                        onChange={(e) => handleStructureChange('rounds', parseInt(e.target.value))}
+                        className="form-input bg-zinc-800 border-zinc-600 text-white"
+                      >
+                        <option value={1}>1 Round (Single Round-Robin)</option>
+                        <option value={2}>2 Rounds (Double Round-Robin)</option>
+                      </select>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Single round: each team plays once. Double round: home and away.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-8 border-t border-zinc-700">
+                  <h3 className="text-xl font-bold text-white mb-4">Knockout Stage Settings</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="form-label text-white">Bracket Size</label>
+                      {(() => {
+                        const teamCapacity = state.basics.team_capacity || 8;
+                        // For combinationA, typically top 4, 8, or 16 qualify
+                        const bracketOptions = [];
+                        const standardSizes = [4, 8, 16];
+                        
+                        // Add team capacity if reasonable
+                        if (teamCapacity <= 16 && !standardSizes.includes(teamCapacity)) {
+                          bracketOptions.push(teamCapacity);
+                        }
+                        
+                        standardSizes.forEach(size => {
+                          if (size <= teamCapacity && !bracketOptions.includes(size)) {
+                            bracketOptions.push(size);
+                          }
+                        });
+                        
+                        bracketOptions.sort((a, b) => a - b);
+                        
+                        return (
+                          <select
+                            value={state.structure.knockout?.bracket_size || Math.min(8, teamCapacity)}
+                            onChange={(e) =>
+                              handleKnockoutChange('bracket_size', parseInt(e.target.value))
+                            }
+                            className="form-input bg-zinc-800 border-zinc-600 text-white"
+                          >
+                            {bracketOptions.map(size => (
+                              <option key={size} value={size}>
+                                {size} Teams
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
+                      <p className="text-xs text-gray-400 mt-1">
+                        Number of top teams from league that advance to knockout (based on team capacity: {state.basics.team_capacity || 8} teams)
+                      </p>
+                    </div>
+
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={state.structure.knockout?.single_leg ?? true}
+                        onChange={(e) => handleKnockoutChange('single_leg', e.target.checked)}
+                        className="w-5 h-5 text-yellow-600 bg-zinc-800 border-zinc-600 rounded"
+                      />
+                      <span className="text-white">Single Leg</span>
+                    </label>
+
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={state.structure.knockout?.third_place ?? false}
+                        onChange={(e) => handleKnockoutChange('third_place', e.target.checked)}
+                        className="w-5 h-5 text-yellow-600 bg-zinc-800 border-zinc-600 rounded"
+                      />
+                      <span className="text-white">Third Place Match</span>
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db import models
 from django.db.models import Q
-from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer
+from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer, MatchScorer, MatchAssist
 from .serializers import VenueSerializer, TournamentSerializer, TeamSerializer, RegistrationSerializer, MatchSerializer, UserSerializer, RegistrationCreateSerializer, PlayerSerializer, TeamPlayerSerializer
 from .permissions import IsOrganizerOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly, IsTeamManagerOrHost, IsTournamentOrganiser, IsTeamManagerOrReadOnly
 from accounts.serializers import UserWithRoleSerializer
@@ -85,10 +85,16 @@ class TournamentViewSet(viewsets.ModelViewSet):
     queryset = Tournament.objects.all()
     serializer_class = TournamentSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
+    lookup_field = 'pk'  # Default lookup by ID
     
     def get_permissions(self):
         """Apply different permissions based on action"""
-        if self.action in ['list', 'retrieve', 'register', 'standings', 'top-scorers', 'role']:
+        # Public endpoints (no auth required)
+        public_actions = ['list', 'retrieve', 'register', 'standings', 'top_scorers', 'top_assists', 'role']
+        # Handle both underscore and hyphen formats for action names
+        action_name = self.action.replace('-', '_') if self.action else None
+        
+        if self.action in public_actions or action_name in public_actions:
             permission_classes = [AllowAny]
         elif self.action in ['update', 'partial_update', 'destroy', 'generate_fixtures', 'publish']:
             permission_classes = [IsAuthenticated, IsTournamentOrganiser]
@@ -118,33 +124,70 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='standings')
     def standings(self, request, pk=None):
         """Get tournament standings calculated from matches"""
-        tournament = self.get_object()
-        teams = Team.objects.filter(registrations__tournament=tournament, registrations__status__in=['pending', 'paid']).distinct()
+        from .tournament_formats import generate_groups, calculate_group_standings
         
+        tournament = self.get_object()
+        teams = list(Team.objects.filter(registrations__tournament=tournament, registrations__status__in=['pending', 'paid']).distinct())
+        matches = Match.objects.filter(tournament=tournament, status='finished')
+        
+        # NEW: Handle combinationB format (Groups → Knockout) with group standings
+        structure = tournament.structure or {}
+        combination_type = structure.get('combination_type', 'combinationA')
+        
+        if tournament.format == 'combination' and combination_type == 'combinationB':
+            # Return group-based standings
+            groups = generate_groups(teams, 'combinationB')
+            group_standings = {}
+            
+            for group in groups:
+                group_name = group['name']
+                group_teams = group['teams']
+                standings_list = calculate_group_standings(group_teams, matches, group_name)
+                
+                # Convert to serialized format
+                group_standings[group_name] = [
+                    {
+                        'team': TeamSerializer(stand['team']).data,
+                        'played': stand['played'],
+                        'won': stand['wins'],
+                        'drawn': stand['draws'],
+                        'lost': stand['losses'],
+                        'points': stand['points'],
+                        'goals_for': stand['goals_for'],
+                        'goals_against': stand['goals_against'],
+                        'goal_difference': stand['goal_difference'],
+                        'position': idx + 1
+                    }
+                    for idx, stand in enumerate(standings_list)
+                ]
+            
+            return Response({
+                'format': 'groups',
+                'groups': group_standings
+            })
+        
+        # Regular standings (league or combinationA)
         standings = []
         for team in teams:
             # Get matches for this team in this tournament
-            matches = Match.objects.filter(
-                tournament=tournament,
-                status='finished'
-            ).filter(
+            team_matches = matches.filter(
                 models.Q(home_team=team) | models.Q(away_team=team)
             )
             
-            played = matches.count()
+            played = team_matches.count()
             wins = 0
             draws = 0
             losses = 0
             goals_for = 0
             goals_against = 0
             
-            for match in matches:
+            for match in team_matches:
                 if match.home_team == team:
-                    gf = match.home_score
-                    ga = match.away_score
+                    gf = match.home_score or 0
+                    ga = match.away_score or 0
                 else:
-                    gf = match.away_score
-                    ga = match.home_score
+                    gf = match.away_score or 0
+                    ga = match.home_score or 0
                 
                 goals_for += gf
                 goals_against += ga
@@ -176,9 +219,12 @@ class TournamentViewSet(viewsets.ModelViewSet):
         for i, standing in enumerate(standings, 1):
             standing['position'] = i
         
-        return Response(standings)
+        return Response({
+            'format': 'league',
+            'standings': standings
+        })
     
-    @action(detail=True, methods=['get'], url_path='top-scorers')
+    @action(detail=True, methods=['get'], url_path='top-scorers', permission_classes=[AllowAny])
     def top_scorers(self, request, pk=None):
         """Get top scorers for the tournament (public endpoint)"""
         tournament = self.get_object()
@@ -211,6 +257,41 @@ class TournamentViewSet(viewsets.ModelViewSet):
             })
         
         return Response(scorers)
+    
+    @action(detail=True, methods=['get'], url_path='top-assists', permission_classes=[AllowAny])
+    def top_assists(self, request, pk=None):
+        """NEW: Get top assists for the tournament (public endpoint)"""
+        tournament = self.get_object()
+        # Get all teams in this tournament
+        team_ids = Team.objects.filter(
+            registrations__tournament=tournament,
+            registrations__status__in=['pending', 'paid']
+        ).values_list('id', flat=True)
+        
+        # Get players from those teams with assists
+        players = Player.objects.filter(
+            memberships__team_id__in=team_ids,
+            assists__gt=0
+        ).order_by('-assists', '-goals', 'first_name', 'last_name')[:10]
+        
+        assisters = []
+        for player in players:
+            # Get team name for this player
+            team_membership = TeamPlayer.objects.filter(
+                player=player,
+                team_id__in=team_ids
+            ).select_related('team').first()
+            
+            team_name = team_membership.team.name if team_membership else 'Unknown'
+            
+            assisters.append({
+                'name': f"{player.first_name} {player.last_name}".strip(),
+                'team': team_name,
+                'assists': player.assists or 0,
+                'goals': player.goals or 0  # Include goals for tiebreaking display
+            })
+        
+        return Response(assisters)
     
     @action(detail=True, methods=['get'], url_path='role')
     def role(self, request, pk=None):
@@ -255,6 +336,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='generate-fixtures')
     def generate_fixtures(self, request, pk=None):
         """Generate fixtures for tournament (organiser only)"""
+        from django.db import transaction
+        from .tournament_formats import generate_fixtures_for_tournament
+        
         tournament = self.get_object()
         
         # Check permission
@@ -264,14 +348,137 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Stub for now - actual fixture generation logic can be added later
-        # This will use tournament.format and tournament.structure to generate matches
-        return Response({
-            'detail': 'Fixtures generation triggered (stub)',
-            'tournament_id': tournament.id,
-            'format': tournament.format
-        }, status=status.HTTP_200_OK)
+        # Check if fixtures already exist
+        existing_matches = Match.objects.filter(tournament=tournament).count()
+        if existing_matches > 0:
+            return Response(
+                {'detail': 'Fixtures already exist. Delete existing matches first to regenerate.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # NEW: Generate fixtures based on tournament format
+        try:
+            with transaction.atomic():
+                matches = generate_fixtures_for_tournament(tournament)
+                
+                # Save matches to database
+                created_matches = []
+                for match in matches:
+                    match.save()
+                    created_matches.append(match)
+                
+                return Response({
+                    'detail': f'Successfully generated {len(created_matches)} fixtures',
+                    'tournament_id': tournament.id,
+                    'format': tournament.format,
+                    'matches_created': len(created_matches)
+                }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'detail': f'Error generating fixtures: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
+    @action(detail=True, methods=['post'], url_path='seed-test-teams', permission_classes=[IsAuthenticated, IsTournamentOrganiser])
+    def seed_test_teams(self, request, pk=None):
+        """Seed test teams for tournament (organiser only)"""
+        from .seed_helpers import seed_test_teams as seed_teams_helper
+        
+        tournament = self.get_object()
+        
+        # Check permission
+        if not request.user.is_authenticated or tournament.organizer_id != request.user.id:
+            return Response(
+                {'detail': 'Only the tournament organiser can seed test teams'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get parameters from request
+        num_teams = int(request.data.get('teams', 8))
+        mark_paid = request.data.get('paid', False) == True
+        players_per_team = int(request.data.get('players', 0))
+        simulate_games = request.data.get('simulate_games', False) == True  # Default to False
+        
+        # Validate
+        # Allow num_teams = 0 to add players to existing teams, but require >= 1 for creating new teams
+        if num_teams < 0:
+            return Response(
+                {'detail': 'Number of teams cannot be negative'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Only validate team capacity if we're actually creating new teams
+        if num_teams > 0 and num_teams > tournament.team_max:
+            return Response(
+                {'detail': f'Number of teams cannot exceed tournament capacity ({tournament.team_max})'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            result = seed_teams_helper(
+                tournament=tournament,
+                num_teams=num_teams,
+                mark_paid=mark_paid,
+                players_per_team=players_per_team,
+                simulate_games=simulate_games
+            )
+            
+            if 'error' in result:
+                return Response(
+                    {'detail': result['error']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'detail': f'Error seeding teams: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'], url_path='simulate-round', permission_classes=[IsAuthenticated, IsTournamentOrganiser])
+    def simulate_round(self, request, pk=None):
+        """Simulate one round of matches for tournament (organiser only)"""
+        from .simulation_helpers import simulate_round as simulate_round_helper
+        
+        tournament = self.get_object()
+        
+        # Check permission
+        if not request.user.is_authenticated or tournament.organizer_id != request.user.id:
+            return Response(
+                {'detail': 'Only the tournament organiser can simulate rounds'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            result = simulate_round_helper(tournament)
+            
+            if 'error' in result:
+                return Response(
+                    {'detail': result['error']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            return Response(result, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'detail': f'Error simulating round: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'], url_path='by-slug/(?P<slug>[^/.]+)', permission_classes=[AllowAny])
+    def by_slug(self, request, slug=None):
+        """NEW: Get tournament by slug (public endpoint)"""
+        try:
+            tournament = Tournament.objects.get(slug=slug)
+            serializer = self.get_serializer(tournament)
+            return Response(serializer.data)
+        except Tournament.DoesNotExist:
+            return Response(
+                {'detail': 'Tournament not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
     @action(detail=True, methods=['post'], url_path='register')
     def register(self, request, pk=None):
         """
@@ -330,9 +537,41 @@ class RegistrationViewSet(mixins.CreateModelMixin,
         registration_id = int(pk)
         status_data = get_registration_status(request.user if request.user.is_authenticated else None, registration_id)
         return Response(status_data)
+    
+    @action(detail=True, methods=['post'], url_path='mark-paid', permission_classes=[IsAuthenticated, IsOrganizerOfRelatedTournamentOrReadOnly])
+    def mark_paid(self, request, pk=None):
+        """NEW: Mark registration as paid (organizer only)"""
+        registration = self.get_object()
+        
+        # Check if user is organizer of this tournament
+        if not request.user.is_authenticated or registration.tournament.organizer_id != request.user.id:
+            return Response(
+                {'detail': 'Only the tournament organizer can mark registrations as paid'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Update status to paid
+        registration.status = 'paid'
+        registration.paid_amount = registration.tournament.entry_fee
+        registration.save()
+        
+        # NEW: Send payment confirmation email to manager
+        try:
+            from .emails import send_payment_confirmation
+            send_payment_confirmation(registration)
+        except Exception as e:
+            # Don't fail the request if email fails
+            print(f"Failed to send payment confirmation email: {e}")
+        
+        return Response({
+            'detail': 'Registration marked as paid',
+            'registration_id': registration.id,
+            'status': registration.status,
+            'paid_amount': str(registration.paid_amount)
+        })
 
 class MatchViewSet(viewsets.ModelViewSet):
-    queryset = Match.objects.select_related("tournament","home_team","away_team").all()
+    queryset = Match.objects.select_related("tournament","home_team","away_team").prefetch_related("scorers__player", "scorers__assist__player", "assists__player").all()
     serializer_class = MatchSerializer
     permission_classes = [IsAuthenticatedOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly]
 
@@ -351,16 +590,154 @@ class MatchViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='score', permission_classes=[IsTeamManagerOrHost])
     def set_score(self, request, pk=None):
+        from django.db import transaction
+        # MatchScorer and MatchAssist already imported at top of file
+        
         match = self.get_object()
         try:
-            hs = int(request.data.get('home_score'))
-            as_ = int(request.data.get('away_score'))
+            hs = int(request.data.get('home_score', 0))
+            as_ = int(request.data.get('away_score', 0))
+            # NEW: Support assists - arrays of player IDs (one per goal)
+            home_scorers = request.data.get('home_scorers', [])  # List of player IDs (one per goal)
+            away_scorers = request.data.get('away_scorers', [])  # List of player IDs (one per goal)
+            home_assists = request.data.get('home_assists', [])  # NEW: List of assister IDs or null (one per goal)
+            away_assists = request.data.get('away_assists', [])  # NEW: List of assister IDs or null (one per goal)
         except (TypeError, ValueError):
             return Response({'detail': 'Invalid score'}, status=status.HTTP_400_BAD_REQUEST)
-        match.home_score = max(0, hs)
-        match.away_score = max(0, as_)
-        match.status = 'finished'
-        match.save()
+        
+        with transaction.atomic():
+            # Clear existing scorers and assists for this match
+            MatchAssist.objects.filter(match=match).delete()  # NEW: Delete assists first (due to FK)
+            MatchScorer.objects.filter(match=match).delete()
+            
+            # Update match score
+            match.home_score = max(0, hs)
+            match.away_score = max(0, as_)
+            match.status = 'finished'
+            match.save()
+            
+            # Track player stats updates (to avoid double-counting)
+            player_goal_updates = {}
+            player_assist_updates = {}
+            player_appearance_updates = set()
+            
+            # NEW: Process home goals with assists
+            for idx, scorer_id in enumerate(home_scorers):
+                try:
+                    scorer_id = int(scorer_id)
+                    assister_id = home_assists[idx] if idx < len(home_assists) else None
+                    if assister_id is not None:
+                        try:
+                            assister_id = int(assister_id)
+                        except (ValueError, TypeError):
+                            assister_id = None
+                    
+                    scorer = Player.objects.get(id=scorer_id)
+                    # Verify scorer is on home team
+                    if TeamPlayer.objects.filter(team=match.home_team, player=scorer).exists():
+                        # Create goal record
+                        goal = MatchScorer.objects.create(
+                            match=match,
+                            player=scorer,
+                            team=match.home_team
+                        )
+                        
+                        # Track goal for stats update
+                        player_goal_updates[scorer_id] = player_goal_updates.get(scorer_id, 0) + 1
+                        player_appearance_updates.add(scorer_id)
+                        
+                        # NEW: Create assist record if assister specified
+                        if assister_id:
+                            try:
+                                assister = Player.objects.get(id=assister_id)
+                                # Verify assister is on same team
+                                if TeamPlayer.objects.filter(team=match.home_team, player=assister).exists():
+                                    MatchAssist.objects.create(
+                                        goal=goal,
+                                        match=match,
+                                        player=assister,
+                                        team=match.home_team
+                                    )
+                                    # Track assist for stats update
+                                    player_assist_updates[assister_id] = player_assist_updates.get(assister_id, 0) + 1
+                                    player_appearance_updates.add(assister_id)
+                            except Player.DoesNotExist:
+                                pass
+                except (ValueError, TypeError, Player.DoesNotExist):
+                    continue
+            
+            # NEW: Process away goals with assists
+            for idx, scorer_id in enumerate(away_scorers):
+                try:
+                    scorer_id = int(scorer_id)
+                    assister_id = away_assists[idx] if idx < len(away_assists) else None
+                    if assister_id is not None:
+                        try:
+                            assister_id = int(assister_id)
+                        except (ValueError, TypeError):
+                            assister_id = None
+                    
+                    scorer = Player.objects.get(id=scorer_id)
+                    # Verify scorer is on away team
+                    if TeamPlayer.objects.filter(team=match.away_team, player=scorer).exists():
+                        # Create goal record
+                        goal = MatchScorer.objects.create(
+                            match=match,
+                            player=scorer,
+                            team=match.away_team
+                        )
+                        
+                        # Track goal for stats update
+                        player_goal_updates[scorer_id] = player_goal_updates.get(scorer_id, 0) + 1
+                        player_appearance_updates.add(scorer_id)
+                        
+                        # NEW: Create assist record if assister specified
+                        if assister_id:
+                            try:
+                                assister = Player.objects.get(id=assister_id)
+                                # Verify assister is on same team
+                                if TeamPlayer.objects.filter(team=match.away_team, player=assister).exists():
+                                    MatchAssist.objects.create(
+                                        goal=goal,
+                                        match=match,
+                                        player=assister,
+                                        team=match.away_team
+                                    )
+                                    # Track assist for stats update
+                                    player_assist_updates[assister_id] = player_assist_updates.get(assister_id, 0) + 1
+                                    player_appearance_updates.add(assister_id)
+                            except Player.DoesNotExist:
+                                pass
+                except (ValueError, TypeError, Player.DoesNotExist):
+                    continue
+            
+            # Update player stats (goals, assists, appearances)
+            for player_id, goal_count in player_goal_updates.items():
+                try:
+                    player = Player.objects.get(id=player_id)
+                    player.goals = (player.goals or 0) + goal_count
+                    player.save()
+                except Player.DoesNotExist:
+                    continue
+            
+            for player_id, assist_count in player_assist_updates.items():
+                try:
+                    player = Player.objects.get(id=player_id)
+                    player.assists = (player.assists or 0) + assist_count
+                    player.save()
+                except Player.DoesNotExist:
+                    continue
+            
+            # Update appearances for all players who played (scorers and assisters already counted)
+            # For other players, we'd need match lineups - for now, only update scorers/assisters
+            for player_id in player_appearance_updates:
+                try:
+                    player = Player.objects.get(id=player_id)
+                    player.appearances = (player.appearances or 0) + 1
+                    player.save()
+                except Player.DoesNotExist:
+                    continue
+        
         return Response(self.get_serializer(match).data)
 
 class PlayerViewSet(viewsets.ModelViewSet):

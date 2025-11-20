@@ -1,5 +1,5 @@
 // src/lib/api.ts
-import { getAuthToken } from './auth';
+import { getAuthToken, getRefreshToken, refresh as refreshToken, clearAuthToken, setAuthToken } from './auth';
 
 const BASE = import.meta.env.VITE_API_BASE_URL;
 
@@ -9,16 +9,43 @@ export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
     ...(opts.headers || {}) 
   };
   
-  const token = getAuthToken();
+  let token = getAuthToken();
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
   
-  const res = await fetch(`${BASE}${path}`, { 
+  // Note: Cache-Control header removed to avoid CORS issues
+  // Backend should handle caching appropriately
+  
+  let res = await fetch(`${BASE}${path}`, { 
     ...opts, 
     headers,
-    credentials: 'omit'
+    credentials: 'omit',
   });
+  
+  // NEW: Handle token expiration - try to refresh and retry once
+  if (res.status === 401 && token) {
+    try {
+      const refresh = getRefreshToken();
+      if (refresh) {
+        const refreshResponse = await refreshToken();
+        token = refreshResponse.access;
+        setAuthToken(token);
+        headers['Authorization'] = `Bearer ${token}`;
+        
+        // Retry the request with new token
+        res = await fetch(`${BASE}${path}`, { 
+          ...opts, 
+          headers,
+          credentials: 'omit'
+        });
+      }
+    } catch (refreshError) {
+      // Refresh failed, clear tokens and let the error propagate
+      clearAuthToken();
+      throw new Error('Session expired. Please log in again.');
+    }
+  }
   
   if (!res.ok) {
     const errorText = await res.text();
@@ -58,7 +85,7 @@ export async function registerTeam(payload: {
 export async function registerTeamToTournament(
   tournamentId: number,
   payload: {
-    team: { name: string; manager_name: string; manager_email: string; phone?: string };
+    team: { name: string; manager_name: string; manager_email: string; manager_password?: string; phone?: string };
     note?: string;
   }
 ) {
@@ -205,6 +232,23 @@ export async function getTournamentTopScorers(tournamentId: number) {
   return res.json();
 }
 
+// NEW: Get top assists for tournament
+export async function getTournamentTopAssists(tournamentId: number) {
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/top-assists/`, { 
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) {
+    // Don't throw for 401, just return empty array
+    if (res.status === 401) {
+      console.warn('Unauthorized access to top assists, returning empty array');
+      return [];
+    }
+    throw new Error('Failed to fetch top assists');
+  }
+  return res.json();
+}
+
 export async function getTournamentRole(tournamentId: number): Promise<{ is_organiser: boolean; is_manager: boolean }> {
   const token = getAuthToken();
   const headers: HeadersInit = { 'Content-Type': 'application/json' };
@@ -253,5 +297,56 @@ export async function publishTournament(tournamentId: number) {
     credentials: 'include',
   });
   if (!res.ok) throw new Error('Failed to publish tournament');
+  return res.json();
+}
+
+// NEW: Mark registration as paid (organizer only)
+export async function markRegistrationPaid(registrationId: number) {
+  return api(`/registrations/${registrationId}/mark-paid/`, {
+    method: 'POST',
+  });
+}
+
+// NEW: Seed test teams for tournament (organizer only)
+export async function seedTestTeams(tournamentId: number, options?: { teams?: number; paid?: boolean; players?: number; simulate_games?: boolean }) {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/seed-test-teams/`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+    body: JSON.stringify({
+      teams: options?.teams || 8,
+      paid: options?.paid || false,
+      players: options?.players || 0,
+      simulate_games: options?.simulate_games === true  // Default to false
+    }),
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || 'Failed to seed test teams');
+  }
+  return res.json();
+}
+
+// NEW: Simulate one round of matches for tournament (organizer only)
+export async function simulateRound(tournamentId: number) {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/simulate-round/`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || 'Failed to simulate round');
+  }
   return res.json();
 }

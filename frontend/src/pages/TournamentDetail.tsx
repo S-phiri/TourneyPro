@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
-import { api, getTournamentStandings, getTournamentTopScorers, generateFixtures } from '../lib/api';
-import { Tournament, Registration, Match } from '../types/tournament';
+import { api, getTournamentStandings, getTournamentTopScorers, getTournamentTopAssists, generateFixtures, seedTestTeams, simulateRound } from '../lib/api';
+import { Tournament } from '../types/tournament';
+import { Match } from '../lib/matches';
+import { Registration } from '../lib/registrations';
 import { listRegistrations } from '../lib/registrations';
 import { listMatches } from '../lib/matches';
 import { formatDate, formatCurrency, parseCSV, parseSponsors } from '../lib/helpers';
@@ -59,12 +62,16 @@ const TournamentDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { isOrganizer, getTournamentRole, user } = useAuth();
+  // NEW: Pull auth state to gate manager registration
+  const { isOrganizer, getTournamentRole, user, isAuthenticated, roleHint } = useAuth();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [standings, setStandings] = useState<any[]>([]);
+  // NEW: Format-based standings data
+  const [standingsData, setStandingsData] = useState<any>(null);
   const [topScorers, setTopScorers] = useState<any[]>([]);
+  const [topAssists, setTopAssists] = useState<any[]>([]); // NEW: Top assists
   const [tournamentRole, setTournamentRole] = useState<{ is_organiser: boolean; is_manager: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,18 +92,35 @@ const TournamentDetail: React.FC = () => {
       setTournament(tournamentData);
 
       // Fetch related data in parallel
-      const [registrationsData, matchesData, standingsData, scorersData, roleData] = await Promise.all([
+      const [registrationsData, matchesData, standingsData, scorersData, assistersData, roleData] = await Promise.all([
         listRegistrations(parseInt(id)),
         listMatches(parseInt(id)),
         getTournamentStandings(parseInt(id)).catch(() => []),
         getTournamentTopScorers(parseInt(id)).catch(() => []),
+        getTournamentTopAssists(parseInt(id)).catch(() => []), // NEW: Fetch top assists
         getTournamentRole(parseInt(id)).catch(() => ({ is_organiser: false, is_manager: false }))
       ]);
 
       setRegistrations(registrationsData);
       setMatches(matchesData);
-      setStandings(Array.isArray(standingsData) ? standingsData : []);
+      
+      // NEW: Handle format-based standings (league or groups)
+      if (standingsData && typeof standingsData === 'object' && 'format' in standingsData) {
+        setStandingsData(standingsData);
+        // Legacy format for backward compatibility
+        if (standingsData.format === 'league' && Array.isArray(standingsData.standings)) {
+          setStandings(standingsData.standings);
+        } else {
+          setStandings([]);
+        }
+      } else {
+        // Legacy: array format
+        setStandings(Array.isArray(standingsData) ? standingsData : []);
+        setStandingsData(null);
+      }
+      
       setTopScorers(Array.isArray(scorersData) ? scorersData : []);
+      setTopAssists(Array.isArray(assistersData) ? assistersData : []); // NEW: Set top assists
       setTournamentRole(roleData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch tournament');
@@ -117,11 +141,59 @@ const TournamentDetail: React.FC = () => {
     s ? new Date(s).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : 'TBC';
 
   const handleRegisterTeam = () => {
-    navigate(`/tournaments/${id}/register`);
+    if (!id) return;
+    // NEW: Use slug if available, otherwise fall back to ID
+    const tournamentSlug = tournament?.slug;
+    const registrationPath = tournamentSlug 
+      ? `/t/${tournamentSlug}/register`
+      : `/tournaments/${id}/register`;
+
+    // NEW: If manager already registered, show message instead of navigating
+    if (tournamentRole?.is_manager) {
+      // Find their team
+      const managerTeam = arr(registrations).find((reg: any) => {
+        const managerId = reg?.team?.manager_user?.id || reg?.team?.manager?.id;
+        return managerId === user?.id;
+      });
+      
+      if (managerTeam?.team?.id) {
+        navigate(`/teams/${managerTeam.team.id}`);
+        return;
+      }
+    }
+
+    // NEW: Force managers to be signed in before registering
+    if (!isAuthenticated) {
+      navigate('/manager/login', {
+        state: {
+          from: { pathname: registrationPath },
+          message: 'Sign in as a manager to register your team.',
+        },
+      });
+      return;
+    }
+
+    if (roleHint !== 'manager') {
+      navigate(`/manager/signup?redirect=${encodeURIComponent(registrationPath)}`, {
+        state: {
+          from: { pathname: registrationPath },
+          message: 'Create a manager account before registering a team.',
+        },
+      });
+      return;
+    }
+
+    navigate(registrationPath);
   };
 
   const handleManageFixtures = () => {
-    navigate(`/tournaments/${id}/fixtures`);
+    // NEW: Use slug if available
+    const tournamentSlug = tournament?.slug;
+    if (tournamentSlug) {
+      navigate(`/t/${tournamentSlug}/fixtures`);
+    } else {
+      navigate(`/tournaments/${id}/fixtures`);
+    }
   };
 
   if (loading) {
@@ -197,7 +269,9 @@ const TournamentDetail: React.FC = () => {
     },
     homeScore: match?.home_score ?? 0,
     awayScore: match?.away_score ?? 0,
-    status: 'completed' as const
+    status: 'completed' as const,
+    // NEW: Include scorer and assist data
+    scorers: match?.scorers || []
   }));
 
   const formatDateRange = () => {
@@ -220,15 +294,78 @@ const TournamentDetail: React.FC = () => {
     ? tournament.whatsapp_url.match(/wa\.me\/(\d+)/)?.[1] || '27123456789'
     : '27123456789';
 
+  // Calculate available slots for seeding
+  const currentTeams = arr(registrations).length;
+  const maxTeams = Number(tournament.team_max) || 0;
+  const availableSlots = maxTeams - currentTeams;
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+    <div className="min-h-screen relative">
+      {/* Background Gradient - Lighter black */}
+      <div className="fixed inset-0 bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 -z-10" />
+      
+      {/* Subtle Football Field Lines Background */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[1] opacity-10">
+        <svg className="absolute inset-0 w-full h-full" style={{ mixBlendMode: 'overlay' }}>
+          {/* Center circle */}
+          <circle cx="50%" cy="50%" r="15%" fill="none" stroke="rgba(234, 179, 8, 0.3)" strokeWidth="1" />
+          {/* Center line */}
+          <line x1="50%" y1="0" x2="50%" y2="100%" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          {/* Penalty boxes */}
+          <rect x="0" y="30%" width="20%" height="40%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          <rect x="80%" y="30%" width="20%" height="40%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          {/* Goal boxes */}
+          <rect x="0" y="40%" width="8%" height="20%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          <rect x="92%" y="40%" width="8%" height="20%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+        </svg>
+      </div>
+      
+      {/* Subtle Faint Lights */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[1]">
+        {[...Array(30)].map((_, i) => {
+          const baseX = (i * 6) % 100;
+          const baseY = (i * 8) % 100;
+          const size = 2 + (i % 2); // 2-3px - much smaller
+          const duration = 4 + (i % 3);
+          const delay = (i * 0.2) % 2;
+          
+          return (
+            <motion.div
+              key={i}
+              className="absolute rounded-full"
+              style={{
+                left: `${baseX}%`,
+                top: `${baseY}%`,
+                width: `${size}px`,
+                height: `${size}px`,
+                background: 'rgba(234, 179, 8, 0.3)',
+                boxShadow: '0 0 4px rgba(234, 179, 8, 0.4)',
+              }}
+              initial={{
+                opacity: 0.2,
+              }}
+              animate={{
+                opacity: [0.2, 0.4, 0.2],
+                scale: [1, 1.2, 1],
+              }}
+              transition={{
+                duration: duration,
+                repeat: Infinity,
+                ease: "easeInOut",
+                delay: delay,
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="relative z-10">
       {/* Tournament Navigation */}
       <TournamentNav tournamentId={tournament.id} />
 
       {/* Hero Section */}
       {/* Pending banner if redirected after registration */}
       {new URLSearchParams(location.search).get('registered') === '1' && (
-        <div className="bg-blue-900/40 text-blue-100 border border-blue-500/40">
+        <div className="bg-zinc-800/40 text-gray-200 border border-zinc-600/40">
           <div className="container py-3 text-sm">Registration submitted — your team is pending. We'll confirm once payment is completed.</div>
         </div>
       )}
@@ -246,6 +383,8 @@ const TournamentDetail: React.FC = () => {
         venueName={toStr(tournament.venue?.name) || toStr(tournament.city)}
         mapLink={toStr(tournament.venue?.map_link)}
         onCTAClick={handleRegisterTeam}
+        ctaDisabled={tournamentRole?.is_manager === true}
+        ctaText={tournamentRole?.is_manager ? "View Your Team" : "Register Your Team"}
       />
 
       {/* Live Ticker */}
@@ -260,17 +399,17 @@ const TournamentDetail: React.FC = () => {
               <div className="flex items-center gap-3">
                 {tournamentRole.is_organiser && (
                   <span className="px-4 py-2 bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border border-yellow-500/50 rounded-full text-yellow-400 font-semibold text-sm">
-                    👑 Organiser
+                    Organiser
                   </span>
                 )}
-                {tournamentRole.is_manager && !tournamentRole.is_organiser && (
-                  <span className="px-4 py-2 bg-gradient-to-r from-blue-500/20 to-blue-600/20 border border-blue-500/50 rounded-full text-blue-400 font-semibold text-sm">
-                    ⚽ Manager
-                  </span>
-                )}
+                    {tournamentRole.is_manager && !tournamentRole.is_organiser && (
+                      <span className="px-4 py-2 bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border border-yellow-500/50 rounded-full text-yellow-400 font-semibold text-sm">
+                        Manager
+                      </span>
+                    )}
                 {!tournamentRole.is_organiser && !tournamentRole.is_manager && user && (
                   <span className="px-4 py-2 bg-gradient-to-r from-gray-500/20 to-gray-600/20 border border-gray-500/50 rounded-full text-gray-400 font-semibold text-sm">
-                    👁️ Viewer
+                    Viewer
                   </span>
                 )}
               </div>
@@ -279,12 +418,62 @@ const TournamentDetail: React.FC = () => {
               {tournamentRole.is_organiser && (
                 <div className="flex flex-wrap gap-3">
                   <button
-                    onClick={() => navigate(`/tournaments/${id}/edit`)}
+                    onClick={() => {
+                      // NEW: Use slug if available for edit link (though edit might still use ID)
+                      navigate(`/tournaments/${id}/edit`);
+                    }}
                     className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
                   >
-                    ✏️ Edit Tournament
+                    Edit Tournament
                   </button>
-                  {arr(registrations).length >= (Number(tournament.team_max) || 0) && (
+                  {availableSlots > 0 && (
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`Create ${availableSlots} test teams to fill tournament capacity (${currentTeams}/${maxTeams})? This will create managers with password "test1234".`)) {
+                          return;
+                        }
+                        try {
+                          const result = await seedTestTeams(parseInt(id!), { teams: availableSlots, paid: false, players: 0, simulate_games: false });
+                          let message = `✓ Successfully created ${result.teams_created} test teams with ${result.players_created} players!\n\n`;
+                          if (result.matches_created > 0) {
+                            message += `✓ Generated ${result.matches_created} fixtures\n`;
+                          }
+                          message += `\nManager passwords: test1234`;
+                          alert(message);
+                          fetchTournament();
+                        } catch (err: any) {
+                          alert(err.message || 'Failed to seed test teams');
+                        }
+                      }}
+                      className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
+                    >
+                      Seed Test Teams ({availableSlots} slots)
+                    </button>
+                  )}
+                  {/* Add players to existing teams - always visible to organisers */}
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm(`Add 11-15 players to all teams that don't have players yet?`)) {
+                        return;
+                      }
+                      try {
+                        const result = await seedTestTeams(parseInt(id!), { teams: 0, paid: false, players: 0, simulate_games: false });
+                        if (result.error) {
+                          alert(result.error);
+                        } else {
+                          alert(`✓ Added ${result.players_created} players to existing teams!`);
+                        }
+                        fetchTournament();
+                      } catch (err: any) {
+                        alert(err.message || 'Failed to add players');
+                      }
+                    }}
+                    className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
+                    title="Add players to existing teams that don't have players"
+                  >
+                    Add Players to Teams
+                  </button>
+                  {arr(registrations).length >= (Number(tournament.team_max) || 0) && upcomingMatches.length === 0 && (
                     <button
                       onClick={async () => {
                         try {
@@ -297,14 +486,34 @@ const TournamentDetail: React.FC = () => {
                       }}
                       className="px-5 py-2.5 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
                     >
-                      🎯 Generate Fixtures
+                      Generate Fixtures
                     </button>
                   )}
+                  {/* Simulate Round - always visible to organisers if there are matches */}
+                  <button
+                    onClick={async () => {
+                      try {
+                        const result = await simulateRound(parseInt(id!));
+                        if (result.round_number) {
+                          const stage = result.is_league_stage ? 'League Stage' : 'Knockout Stage';
+                          alert(`✓ ${result.message}\n\nRound ${result.round_number} (${stage}): ${result.matches_simulated} matches simulated`);
+                        } else {
+                          alert(result.message || 'No matches to simulate');
+                        }
+                        fetchTournament();
+                      } catch (err: any) {
+                        alert(err.message || 'Failed to simulate round');
+                      }
+                    }}
+                    className="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20 hover:-translate-y-0.5"
+                  >
+                    Simulate Round ({upcomingMatches.length || arr(matches).filter((m: any) => m?.status === 'scheduled').length || 0} matches remaining)
+                  </button>
                   <button
                     onClick={handleManageFixtures}
                     className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
                   >
-                    📊 Manage Fixtures
+                    Manage Fixtures
                   </button>
                 </div>
               )}
@@ -323,9 +532,9 @@ const TournamentDetail: React.FC = () => {
                       navigate(`/teams/${managerTeam.team.id}`);
                     }
                   }}
-                  className="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20 hover:-translate-y-0.5"
+                  className="px-5 py-2.5 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
                 >
-                  ⚽ Manage Team
+                  Manage Team
                 </button>
               )}
             </div>
@@ -365,8 +574,24 @@ const TournamentDetail: React.FC = () => {
       {/* Tournament Tabs */}
       <TournamentTabs
         teams={teams}
+        registrations={arr(registrations).map((reg: any) => ({
+          id: reg.id,
+          team: {
+            id: String(reg?.team?.id),
+            name: toStr(reg?.team?.name),
+            initials: toStr(reg?.team?.name).substring(0, 2).toUpperCase(),
+            manager: toStr(reg?.team?.manager_name),
+            crest: reg?.team?.crest
+          },
+          status: reg?.status || 'pending',
+          paid_amount: reg?.paid_amount || 0
+        }))}
         fixtures={fixtures}
         results={results}
+        // NEW: Pass format-based standings data
+        standingsData={standingsData}
+        tournamentFormat={tournament.format as 'league' | 'knockout' | 'combination'}
+        // Legacy: backward compatibility
         leaderboard={standings.map((s: any) => ({
           position: s.position,
           team: {
@@ -385,11 +610,26 @@ const TournamentDetail: React.FC = () => {
           team: s.team || 'Unknown',
           goals: s.goals || 0
         }))}
+        topAssists={topAssists.map((a: any) => ({ // NEW: Pass top assists
+          name: a.name || 'Unknown',
+          team: a.team || 'Unknown',
+          assists: a.assists || 0,
+          goals: a.goals || 0
+        }))}
         isOrganiser={tournamentRole?.is_organiser || false}
+        tournamentId={tournament?.id}
         onAddTeam={handleRegisterTeam}
         onAddMatch={handleManageFixtures}
-        onUpdateScore={() => navigate(`/tournaments/${id}/fixtures`)}
+        onUpdateScore={() => {
+          const tournamentSlug = tournament?.slug;
+          if (tournamentSlug) {
+            navigate(`/t/${tournamentSlug}/fixtures`);
+          } else {
+            navigate(`/tournaments/${id}/fixtures`);
+          }
+        }}
         onViewTeam={(teamId) => navigate(`/teams/${teamId}`)}
+        onRegistrationUpdate={fetchTournament}
       />
 
       {/* About Section */}
@@ -458,8 +698,11 @@ const TournamentDetail: React.FC = () => {
         <MobileStickyCTA
           entryFee={formatCurrency(tournament.entry_fee)}
           onRegisterClick={handleRegisterTeam}
+          disabled={tournamentRole?.is_manager === true}
+          buttonText={tournamentRole?.is_manager ? "View Your Team" : "Register Team"}
         />
       )}
+      </div>
     </div>
   );
 };

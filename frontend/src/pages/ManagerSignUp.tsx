@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { registerManager } from '../lib/auth';
 import { saveAuthToken } from '../lib/auth';
@@ -16,7 +16,11 @@ interface ManagerSignUpData {
 
 const ManagerSignUp: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const redirectTo = searchParams.get('redirect') || '/leagues';
+  const location = useLocation();
+  // NEW: Check both query param and location state for redirect
+  const redirectFromQuery = searchParams.get('redirect');
+  const redirectFromState = (location.state as any)?.from?.pathname;
+  const redirectTo = redirectFromState || redirectFromQuery || '/leagues';
   
   const [formData, setFormData] = useState<ManagerSignUpData>({
     first_name: '',

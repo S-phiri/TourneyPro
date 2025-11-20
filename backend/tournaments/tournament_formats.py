@@ -1,0 +1,412 @@
+"""
+NEW: Tournament format utilities for dynamic fixture generation
+Supports League, Knockout, and Combination formats without breaking existing models
+"""
+from typing import List, Dict, Tuple, Optional
+from datetime import datetime, timedelta
+from django.utils import timezone
+from .models import Tournament, Team, Match, Registration
+
+
+def generate_groups(teams: List[Team], type: str = "combinationB") -> List[Dict]:
+    """
+    Generate balanced groups for combinationB format (Groups → Knockout)
+    
+    Rules:
+    - Try to create groups of 4-5 teams where possible
+    - Balance group sizes (minimize size difference)
+    - If 10 teams: 2 groups of 5
+    - If 12 teams: 4 groups of 3 or 3 groups of 4
+    - General: prefer groups of 4-5, balance remainder
+    
+    Returns: List of group dicts with teams assigned
+    """
+    if not teams:
+        return []
+    
+    num_teams = len(teams)
+    
+    # Determine optimal group configuration
+    if num_teams <= 4:
+        # Too few teams, single group
+        return [{"name": "Group A", "teams": teams}]
+    elif num_teams <= 8:
+        # 2 groups of 4
+        mid = num_teams // 2
+        return [
+            {"name": "Group A", "teams": teams[:mid]},
+            {"name": "Group B", "teams": teams[mid:]}
+        ]
+    elif num_teams == 10:
+        # 2 groups of 5
+        return [
+            {"name": "Group A", "teams": teams[:5]},
+            {"name": "Group B", "teams": teams[5:]}
+        ]
+    elif num_teams == 12:
+        # 4 groups of 3 (more balanced for knockout)
+        return [
+            {"name": "Group A", "teams": teams[0:3]},
+            {"name": "Group B", "teams": teams[3:6]},
+            {"name": "Group C", "teams": teams[6:9]},
+            {"name": "Group D", "teams": teams[9:12]}
+        ]
+    elif num_teams <= 16:
+        # 4 groups of 4
+        groups_count = 4
+        per_group = num_teams // groups_count
+        remainder = num_teams % groups_count
+        
+        groups = []
+        start_idx = 0
+        for i in range(groups_count):
+            group_size = per_group + (1 if i < remainder else 0)
+            groups.append({
+                "name": f"Group {chr(65 + i)}",  # A, B, C, D
+                "teams": teams[start_idx:start_idx + group_size]
+            })
+            start_idx += group_size
+        return groups
+    else:
+        # For larger tournaments, use 4-5 teams per group
+        ideal_group_size = 4 if num_teams % 4 == 0 else 5
+        num_groups = (num_teams + ideal_group_size - 1) // ideal_group_size  # Ceiling division
+        
+        groups = []
+        start_idx = 0
+        for i in range(num_groups):
+            group_size = min(ideal_group_size, num_teams - start_idx)
+            groups.append({
+                "name": f"Group {chr(65 + i)}",  # A, B, C, D, ...
+                "teams": teams[start_idx:start_idx + group_size]
+            })
+            start_idx += group_size
+        return groups
+
+
+def generate_league_fixtures(teams: List[Team], tournament: Tournament, start_date: datetime) -> List[Match]:
+    """
+    Generate round-robin league fixtures (everyone plays everyone once)
+    Organized into rounds where each team plays one game per round
+    For n teams: (n-1) rounds, each round has n/2 games
+    
+    Returns list of Match objects (not saved - caller should save)
+    """
+    matches = []
+    num_teams = len(teams)
+    
+    if num_teams < 2:
+        return matches
+    
+    # Round-robin algorithm: organize matches into rounds
+    # Each round: all teams play one game (n/2 games per round)
+    # Total rounds: (n-1) rounds for n teams
+    
+    # Create list of all matchups (team i vs team j, where i < j)
+    matchups = []
+    for i in range(num_teams):
+        for j in range(i + 1, num_teams):
+            matchups.append((teams[i], teams[j]))
+    
+    # Organize matchups into rounds
+    # Simple algorithm: distribute matchups across rounds
+    num_rounds = num_teams - 1  # Standard round-robin
+    matches_per_round = num_teams // 2
+    
+    current_date = start_date
+    
+    # Round-robin scheduling: rotate teams to ensure each team plays once per round
+    # Use a simple rotation algorithm
+    rounds = []
+    if num_teams % 2 == 0:  # Even number of teams
+        # Standard round-robin rotation
+        fixed = teams[0]  # Fix first team
+        rotating = teams[1:]
+        
+        for round_num in range(num_rounds):
+            round_matches = []
+            # Fixed team plays against rotating[0]
+            round_matches.append((fixed, rotating[0]))
+            
+            # Pair remaining teams
+            for i in range(1, len(rotating) // 2 + 1):
+                round_matches.append((rotating[i], rotating[len(rotating) - i]))
+            
+            rounds.append(round_matches)
+            # Rotate the list (keep first, rotate rest)
+            rotating = [rotating[0]] + [rotating[-1]] + rotating[1:-1]
+    else:  # Odd number of teams
+        # Add a "bye" team (can be None or a placeholder)
+        teams_with_bye = teams + [None]
+        fixed = teams_with_bye[0]
+        rotating = teams_with_bye[1:]
+        
+        for round_num in range(num_rounds + 1):  # One extra round for bye
+            round_matches = []
+            # Fixed team plays against rotating[0] (or gets bye if None)
+            if rotating[0] is not None:
+                round_matches.append((fixed, rotating[0]))
+            
+            # Pair remaining teams
+            for i in range(1, len(rotating) // 2 + 1):
+                if rotating[i] is not None and rotating[len(rotating) - i] is not None:
+                    round_matches.append((rotating[i], rotating[len(rotating) - i]))
+            
+            if round_matches:  # Only add non-empty rounds
+                rounds.append(round_matches)
+            # Rotate the list
+            rotating = [rotating[0]] + [rotating[-1]] + rotating[1:-1]
+    
+    # Create match objects organized by round
+    for round_num, round_matches in enumerate(rounds):
+        round_date = start_date + timedelta(days=round_num)
+        
+        for home_team, away_team in round_matches:
+            match = Match(
+                tournament=tournament,
+                home_team=home_team,
+                away_team=away_team,
+                kickoff_at=round_date,
+                status='scheduled'
+            )
+            matches.append(match)
+    
+    return matches
+
+
+def generate_knockout_fixtures(teams: List[Team], tournament: Tournament, start_date: datetime) -> List[Match]:
+    """
+    Generate single-elimination knockout fixtures (bracket style)
+    For knockout: generates first round only (subsequent rounds generated after each round completes)
+    - Round 1: n/2 matches (n teams)
+    - Total matches for full tournament = n - 1 (for n teams)
+    - But we only generate Round 1 here, subsequent rounds are created dynamically
+    
+    Returns list of Match objects (not saved - caller should save)
+    """
+    matches = []
+    num_teams = len(teams)
+    
+    if num_teams < 2:
+        return matches
+    
+    # For knockout, only generate the first round
+    # Each match eliminates one team, so Round 1 has num_teams // 2 matches
+    num_matches_round1 = num_teams // 2
+    
+    # Pair teams for first round
+    for i in range(num_matches_round1):
+        home_team = teams[i * 2]
+        away_team = teams[i * 2 + 1]
+        
+        match = Match(
+            tournament=tournament,
+            home_team=home_team,
+            away_team=away_team,
+            kickoff_at=start_date,
+            status='scheduled',
+            pitch="Round 1"  # Use pitch field to track round
+        )
+        matches.append(match)
+    
+    # Note: Subsequent rounds should be generated after Round 1 completes
+    # This ensures we know which teams actually advanced
+    # For a 10-team knockout: Round 1 = 5 matches, Round 2 = 2-3 matches, etc.
+    # Total = 9 matches (10 - 1)
+    
+    return matches
+
+
+def generate_combination_fixtures(
+    teams: List[Team], 
+    tournament: Tournament, 
+    start_date: datetime,
+    combination_type: str = "combinationA"
+) -> List[Match]:
+    """
+    Generate fixtures for combination format
+    - combinationA: League → Knockout (all teams in one league, top X qualify)
+    - combinationB: Groups → Knockout (groups play round-robin, top 2 from each advance)
+    
+    Returns list of Match objects (not saved - caller should save)
+    """
+    matches = []
+    current_date = start_date
+    
+    if combination_type == "combinationA":
+        # League stage: all teams play round-robin
+        league_matches = generate_league_fixtures(teams, tournament, current_date)
+        matches.extend(league_matches)
+        
+        # Calculate how many days league stage takes
+        num_league_days = len(league_matches) // max(1, len(teams) // 2)
+        current_date += timedelta(days=num_league_days + 1)  # +1 day gap
+        
+        # Knockout stage: top teams qualify (determined after league)
+        # For now, we'll create placeholder knockout matches
+        # Top 4, 8, or 16 qualify (depending on team count)
+        qualify_count = min(8, len(teams))  # Top 8 qualify by default
+        if len(teams) <= 4:
+            qualify_count = 4
+        elif len(teams) <= 8:
+            qualify_count = 4
+        
+        # Create knockout bracket for qualifiers
+        # Note: Actual teams will be determined after league stage completes
+        # This is a placeholder structure
+        knockout_teams = teams[:qualify_count]  # Placeholder
+        knockout_matches = generate_knockout_fixtures(knockout_teams, tournament, current_date)
+        matches.extend(knockout_matches)
+        
+    elif combination_type == "combinationB":
+        # Groups stage: create groups and generate league fixtures per group
+        groups = generate_groups(teams, "combinationB")
+        group_matches = []
+        
+        for group in groups:
+            group_teams = group["teams"]
+            group_name = group["name"]
+            
+            # Generate round-robin within group
+            for i in range(len(group_teams)):
+                for j in range(i + 1, len(group_teams)):
+                    home_team = group_teams[i]
+                    away_team = group_teams[j]
+                    
+                    match = Match(
+                        tournament=tournament,
+                        home_team=home_team,
+                        away_team=away_team,
+                        kickoff_at=current_date,
+                        status='scheduled',
+                        pitch=group_name  # Use pitch to track group
+                    )
+                    group_matches.append(match)
+                    matches.append(match)
+            
+            # Space out groups (each group's matches on different days/time slots)
+            current_date += timedelta(days=1)
+        
+        # Knockout stage: top 2 from each group advance
+        # Calculate days needed for groups
+        max_group_size = max(len(g["teams"]) for g in groups) if groups else 0
+        group_stage_days = max_group_size  # Rough estimate
+        current_date += timedelta(days=group_stage_days + 1)  # +1 day gap
+        
+        # Top 2 from each group = 2 * num_groups teams
+        num_qualifiers = len(groups) * 2 if groups else 0
+        knockout_teams = teams[:num_qualifiers]  # Placeholder - actual qualifiers determined after group stage
+        knockout_matches = generate_knockout_fixtures(knockout_teams, tournament, current_date)
+        matches.extend(knockout_matches)
+    
+    return matches
+
+
+def generate_fixtures_for_tournament(tournament: Tournament) -> List[Match]:
+    """
+    Main entry point: Generate fixtures based on tournament format
+    Returns list of Match objects (caller should save them)
+    """
+    # Get registered teams
+    registrations = Registration.objects.filter(
+        tournament=tournament,
+        status__in=['pending', 'paid']
+    ).select_related('team')
+    
+    teams = [reg.team for reg in registrations]
+    
+    if len(teams) < 2:
+        return []  # Need at least 2 teams
+    
+    # Determine start date
+    start_date = timezone.make_aware(
+        datetime.combine(tournament.start_date, datetime.min.time())
+    )
+    
+    # Get combination sub-type from structure JSON
+    structure = tournament.structure or {}
+    combination_type = structure.get('combination_type', 'combinationA')
+    
+    # Generate fixtures based on format
+    if tournament.format == "league":
+        return generate_league_fixtures(teams, tournament, start_date)
+    elif tournament.format == "knockout":
+        return generate_knockout_fixtures(teams, tournament, start_date)
+    elif tournament.format == "combination":
+        return generate_combination_fixtures(teams, tournament, start_date, combination_type)
+    else:
+        # Default to league
+        return generate_league_fixtures(teams, tournament, start_date)
+
+
+def calculate_group_standings(teams: List[Team], matches: List[Match], group_name: str) -> List[Dict]:
+    """
+    Calculate standings for a specific group (for combinationB format)
+    Returns sorted list of team standings dicts
+    """
+    # Filter matches for this group (stored in pitch field)
+    group_matches = [m for m in matches if m.pitch == group_name and m.status == 'finished']
+    
+    # Initialize standings for each team
+    standings = {}
+    for team in teams:
+        standings[team.id] = {
+            'team': team,
+            'played': 0,
+            'wins': 0,
+            'draws': 0,
+            'losses': 0,
+            'goals_for': 0,
+            'goals_against': 0,
+            'goal_difference': 0,
+            'points': 0
+        }
+    
+    # Process matches
+    for match in group_matches:
+        home_team_id = match.home_team.id
+        away_team_id = match.away_team.id
+        
+        home_score = match.home_score or 0
+        away_score = match.away_score or 0
+        
+        # Update home team
+        standings[home_team_id]['played'] += 1
+        standings[home_team_id]['goals_for'] += home_score
+        standings[home_team_id]['goals_against'] += away_score
+        
+        # Update away team
+        standings[away_team_id]['played'] += 1
+        standings[away_team_id]['goals_for'] += away_score
+        standings[away_team_id]['goals_against'] += home_score
+        
+        # Determine result
+        if home_score > away_score:
+            standings[home_team_id]['wins'] += 1
+            standings[home_team_id]['points'] += 3
+            standings[away_team_id]['losses'] += 1
+        elif away_score > home_score:
+            standings[away_team_id]['wins'] += 1
+            standings[away_team_id]['points'] += 3
+            standings[home_team_id]['losses'] += 1
+        else:
+            standings[home_team_id]['draws'] += 1
+            standings[home_team_id]['points'] += 1
+            standings[away_team_id]['draws'] += 1
+            standings[away_team_id]['points'] += 1
+    
+    # Calculate goal difference
+    for team_id in standings:
+        standings[team_id]['goal_difference'] = (
+            standings[team_id]['goals_for'] - standings[team_id]['goals_against']
+        )
+    
+    # Sort by points, then goal difference, then goals for
+    sorted_standings = sorted(
+        standings.values(),
+        key=lambda x: (x['points'], x['goal_difference'], x['goals_for']),
+        reverse=True
+    )
+    
+    return sorted_standings
+

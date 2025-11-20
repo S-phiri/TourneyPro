@@ -51,6 +51,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setUser(null);
         setAccessToken(null);
       }
+    } else {
+      // No token means no user - clear any stale state
+      setUser(null);
+      setAccessToken(null);
     }
     
     setIsLoading(false);
@@ -63,14 +67,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const login = async (username: string, password: string) => {
     try {
       setIsLoading(true);
+      // Clear old user state and tokens BEFORE logging in with new credentials
+      setUser(null);
+      setAccessToken(null);
+      clearAuthToken(); // Clear any stale tokens from localStorage
+      
+      // Now login with new credentials
       const response = await authLogin(username, password);
       setAccessToken(response.access);
       
-      // Fetch user data
+      // Fetch NEW user data with the fresh token
       const userData = await getCurrentUser();
       setUser(userData);
     } catch (error) {
       clearAuthToken();
+      setUser(null);
+      setAccessToken(null);
       throw error;
     } finally {
       setIsLoading(false);

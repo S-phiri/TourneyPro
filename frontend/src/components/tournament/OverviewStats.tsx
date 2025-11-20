@@ -72,7 +72,7 @@ export default function OverviewStats({
                 {stat.isNumber ? <AnimatedNumber value={stat.value as number} /> : stat.value}
               </div>
               
-              <div className="text-gray-400 font-medium">{stat.label}</div>
+              <div className={`font-medium ${stat.label === "Upcoming Matches" ? "text-yellow-400" : "text-gray-400"}`}>{stat.label}</div>
             </div>
           </motion.div>
         ))}

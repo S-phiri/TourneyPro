@@ -17,6 +17,27 @@ export interface Match {
   home_score: number;
   away_score: number;
   status: 'scheduled' | 'finished';
+  // NEW: Scorer and assist data from backend
+  scorers?: Array<{
+    id: number;
+    player_id: number;
+    player_name: string;
+    team_id: number;
+    team_name: string;
+    minute?: number;
+    assist?: {
+      player_id: number;
+      player_name: string;
+    };
+  }>;
+  assists?: Array<{
+    id: number;
+    player_id: number;
+    player_name: string;
+    team_id: number;
+    team_name: string;
+    goal_id?: number;
+  }>;
 }
 
 export interface CreateMatchData {

@@ -47,26 +47,34 @@ export function saveAuthToken(accessToken: string, refreshToken: string): void {
 
 // Auth API calls
 export async function login(username: string, password: string): Promise<LoginResponse> {
-  const response = await fetch(`${BASE}/auth/login/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ username, password }),
-  });
+  try {
+    const response = await fetch(`${BASE}/auth/login/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ username, password }),
+      credentials: 'include',
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || 'Login failed');
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Login failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data: LoginResponse = await response.json();
+    
+    // Store tokens
+    setAuthToken(data.access);
+    setRefreshToken(data.refresh);
+    
+    return data;
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Cannot connect to server. Please check if the backend is running.');
+    }
+    throw error;
   }
-
-  const data: LoginResponse = await response.json();
-  
-  // Store tokens
-  setAuthToken(data.access);
-  setRefreshToken(data.refresh);
-  
-  return data;
 }
 
 export async function refresh(): Promise<LoginResponse> {

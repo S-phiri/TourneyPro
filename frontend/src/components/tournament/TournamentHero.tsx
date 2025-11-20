@@ -16,6 +16,8 @@ interface TournamentHeroProps {
   mapLink?: string;
   onCTAClick?: () => void;
   videoBackground?: string;
+  ctaDisabled?: boolean;
+  ctaText?: string;
 }
 
 export default function TournamentHero({
@@ -31,12 +33,14 @@ export default function TournamentHero({
   venueName = "Soccer City Stadium",
   mapLink,
   onCTAClick = () => {},
-  videoBackground
+  videoBackground,
+  ctaDisabled = false,
+  ctaText = "Register Your Team"
 }: TournamentHeroProps) {
   const statusColors = {
-    upcoming: "bg-blue-500",
-    live: "bg-red-500 animate-pulse",
-    completed: "bg-gray-500"
+    upcoming: "bg-zinc-800 border border-zinc-600 text-white",
+    live: "bg-red-500 animate-pulse text-white",
+    completed: "bg-gray-500 text-white"
   };
 
   const statusLabels = {
@@ -100,7 +104,12 @@ export default function TournamentHero({
               animate={{ opacity: 1, y: 0 }}
               className="flex items-center gap-3 mb-6"
             >
-              <span className={`${statusColors[status]} px-4 py-1.5 rounded-full text-white text-sm font-bold uppercase tracking-wider`}>
+              <span className={`${statusColors[status]} px-4 py-1.5 rounded-full text-sm font-bold uppercase tracking-wider flex items-center gap-2`}>
+                {status === 'upcoming' && (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                )}
                 {statusLabels[status]}
               </span>
               <div className="flex items-center gap-2 text-yellow-500">
@@ -161,9 +170,14 @@ export default function TournamentHero({
               <Button
                 size="lg"
                 onClick={onCTAClick}
-                className="bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold text-lg px-10 py-7 rounded-xl shadow-2xl shadow-yellow-500/50 transition-all hover:scale-105"
+                disabled={ctaDisabled}
+                className={`font-bold text-lg px-10 py-7 rounded-xl shadow-2xl transition-all ${
+                  ctaDisabled
+                    ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed shadow-zinc-700/50'
+                    : 'bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black shadow-yellow-500/50 hover:scale-105'
+                }`}
               >
-                Register Your Team
+                {ctaText}
               </Button>
             </motion.div>
           </div>

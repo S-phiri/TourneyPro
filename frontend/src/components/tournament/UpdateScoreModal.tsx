@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { X, Plus, Minus, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Plus, Minus, Loader2, ChevronDown } from 'lucide-react';
 import { listTeamPlayers, api } from '../../lib/api';
 import { motion, AnimatePresence } from 'framer-motion';
+
+// NEW: Configuration - allow self-assist toggle
+const ALLOW_SELF_ASSIST = false; // Set to true to allow scorer to also assist
 
 interface Player {
   id: number;
@@ -26,12 +29,16 @@ interface UpdateScoreModalProps {
   homeTeam: { id: number; name: string };
   awayTeam: { id: number; name: string };
   currentScores: { home: number; away: number };
-  onSave: (scores: { home: number; away: number }, scorers: { home: number[]; away: number[] }) => Promise<void>;
+  onSave: (scores: { home: number; away: number }, scorers: { home: number[]; away: number[] }, assists: { home: (number | null)[]; away: (number | null)[] }) => Promise<void>;
 }
 
-interface Scorer {
-  player: Player;
-  goals: number;
+// NEW: Goal event with assist
+interface GoalEvent {
+  id: string; // Temporary ID for UI
+  scorerId: number;
+  scorerName: string;
+  assisterId: number | null;
+  assisterName: string | null;
 }
 
 export default function UpdateScoreModal({
@@ -47,22 +54,33 @@ export default function UpdateScoreModal({
   const [awayPlayers, setAwayPlayers] = useState<TeamPlayer[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [homeScorers, setHomeScorers] = useState<Scorer[]>([]);
-  const [awayScorers, setAwayScorers] = useState<Scorer[]>([]);
-  const [currentHomeScore, setCurrentHomeScore] = useState(currentScores.home);
-  const [currentAwayScore, setCurrentAwayScore] = useState(currentScores.away);
+  // NEW: Track individual goals with assists
+  const [homeGoals, setHomeGoals] = useState<GoalEvent[]>([]);
+  const [awayGoals, setAwayGoals] = useState<GoalEvent[]>([]);
+  const [openAssistDropdown, setOpenAssistDropdown] = useState<string | null>(null); // goalId
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setOpenAssistDropdown(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
-      setCurrentHomeScore(currentScores.home);
-      setCurrentAwayScore(currentScores.away);
       fetchPlayers();
     } else {
       // Reset state when modal closes
-      setHomeScorers([]);
-      setAwayScorers([]);
+      setHomeGoals([]);
+      setAwayGoals([]);
+      setOpenAssistDropdown(null);
     }
-  }, [isOpen, currentScores]);
+  }, [isOpen]);
 
   const fetchPlayers = async () => {
     setLoading(true);
@@ -80,67 +98,77 @@ export default function UpdateScoreModal({
     }
   };
 
-  const addScorer = (team: 'home' | 'away', player: Player) => {
-    const existing = team === 'home' 
-      ? homeScorers.find(s => s.player.id === player.id)
-      : awayScorers.find(s => s.player.id === player.id);
-    
-    if (existing) {
-      if (team === 'home') {
-        setHomeScorers(homeScorers.map(s => 
-          s.player.id === player.id ? { ...s, goals: s.goals + 1 } : s
-        ));
-        setCurrentHomeScore(currentHomeScore + 1);
-      } else {
-        setAwayScorers(awayScorers.map(s => 
-          s.player.id === player.id ? { ...s, goals: s.goals + 1 } : s
-        ));
-        setCurrentAwayScore(currentAwayScore + 1);
-      }
+  // NEW: Add goal with scorer
+  const addGoal = (team: 'home' | 'away', player: Player) => {
+    const goalId = `goal-${Date.now()}-${Math.random()}`;
+    const newGoal: GoalEvent = {
+      id: goalId,
+      scorerId: player.id,
+      scorerName: `${player.first_name} ${player.last_name}`,
+      assisterId: null,
+      assisterName: null
+    };
+
+    if (team === 'home') {
+      setHomeGoals([...homeGoals, newGoal]);
     } else {
-      if (team === 'home') {
-        setHomeScorers([...homeScorers, { player, goals: 1 }]);
-        setCurrentHomeScore(currentHomeScore + 1);
-      } else {
-        setAwayScorers([...awayScorers, { player, goals: 1 }]);
-        setCurrentAwayScore(currentAwayScore + 1);
-      }
+      setAwayGoals([...awayGoals, newGoal]);
     }
   };
 
-  const removeScorer = (team: 'home' | 'away', playerId: number, goals: number) => {
-    if (goals <= 1) {
-      if (team === 'home') {
-        setHomeScorers(homeScorers.filter(s => s.player.id !== playerId));
-        setCurrentHomeScore(Math.max(0, currentHomeScore - 1));
-      } else {
-        setAwayScorers(awayScorers.filter(s => s.player.id !== playerId));
-        setCurrentAwayScore(Math.max(0, currentAwayScore - 1));
-      }
+  // NEW: Remove goal
+  const removeGoal = (team: 'home' | 'away', goalId: string) => {
+    if (team === 'home') {
+      setHomeGoals(homeGoals.filter(g => g.id !== goalId));
     } else {
-      if (team === 'home') {
-        setHomeScorers(homeScorers.map(s => 
-          s.player.id === playerId ? { ...s, goals: s.goals - 1 } : s
-        ));
-        setCurrentHomeScore(Math.max(0, currentHomeScore - 1));
-      } else {
-        setAwayScorers(awayScorers.map(s => 
-          s.player.id === playerId ? { ...s, goals: s.goals - 1 } : s
-        ));
-        setCurrentAwayScore(Math.max(0, currentAwayScore - 1));
-      }
+      setAwayGoals(awayGoals.filter(g => g.id !== goalId));
     }
+    if (openAssistDropdown === goalId) {
+      setOpenAssistDropdown(null);
+    }
+  };
+
+  // NEW: Set assist for a goal
+  const setAssist = (team: 'home' | 'away', goalId: string, assisterId: number | null, assisterName: string | null) => {
+    const updateGoal = (goal: GoalEvent) => {
+      if (goal.id === goalId) {
+        return { ...goal, assisterId, assisterName };
+      }
+      return goal;
+    };
+
+    if (team === 'home') {
+      setHomeGoals(homeGoals.map(updateGoal));
+    } else {
+      setAwayGoals(awayGoals.map(updateGoal));
+    }
+    setOpenAssistDropdown(null);
+  };
+
+  // NEW: Get eligible assisters for a goal (teammates, excluding scorer if ALLOW_SELF_ASSIST is false)
+  const getEligibleAssisters = (team: 'home' | 'away', scorerId: number): TeamPlayer[] => {
+    const players = team === 'home' ? homePlayers : awayPlayers;
+    return players.filter(tp => {
+      if (!ALLOW_SELF_ASSIST && tp.player.id === scorerId) {
+        return false;
+      }
+      return true;
+    });
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Convert goals to arrays: one scorer ID per goal, one assister ID (or null) per goal
+      const homeScorers = homeGoals.map(g => g.scorerId);
+      const awayScorers = awayGoals.map(g => g.scorerId);
+      const homeAssists = homeGoals.map(g => g.assisterId);
+      const awayAssists = awayGoals.map(g => g.assisterId);
+
       await onSave(
-        { home: currentHomeScore, away: currentAwayScore },
-        { 
-          home: homeScorers.flatMap(s => Array(s.goals).fill(s.player.id)), 
-          away: awayScorers.flatMap(s => Array(s.goals).fill(s.player.id)) 
-        }
+        { home: homeGoals.length, away: awayGoals.length },
+        { home: homeScorers, away: awayScorers },
+        { home: homeAssists, away: awayAssists } // NEW: Pass assists
       );
       onClose();
     } catch (err) {
@@ -151,6 +179,88 @@ export default function UpdateScoreModal({
   };
 
   if (!isOpen) return null;
+
+  // Render goal chip with assist selector
+  const renderGoalChip = (goal: GoalEvent, team: 'home' | 'away', teamPlayers: TeamPlayer[]) => {
+    const eligibleAssisters = getEligibleAssisters(team, goal.scorerId);
+    const isDropdownOpen = openAssistDropdown === goal.id;
+
+    return (
+      <div key={goal.id} className="bg-zinc-900/50 border border-zinc-700 rounded-lg p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 flex-1">
+            <span className="text-2xl">⚽</span>
+            <span className="text-white font-medium">{goal.scorerName}</span>
+          </div>
+          <button
+            onClick={() => removeGoal(team, goal.id)}
+            className="p-1 hover:bg-zinc-700 rounded transition-colors"
+            disabled={saving}
+            aria-label="Remove goal"
+          >
+            <Minus className="w-4 h-4 text-red-400" />
+          </button>
+        </div>
+        
+        {/* NEW: Assist selector */}
+        <div className="relative" ref={isDropdownOpen ? dropdownRef : null}>
+          <button
+            onClick={() => setOpenAssistDropdown(isDropdownOpen ? null : goal.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setOpenAssistDropdown(isDropdownOpen ? null : goal.id);
+              } else if (e.key === 'Escape') {
+                setOpenAssistDropdown(null);
+              }
+            }}
+            className="w-full flex items-center justify-between bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-600 rounded px-3 py-2 text-sm transition-colors"
+            disabled={saving}
+            aria-label="Select assist"
+            aria-expanded={isDropdownOpen}
+          >
+            <span className="text-gray-300">
+              🎯 Assist: {goal.assisterName || '—'}
+            </span>
+            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {isDropdownOpen && (
+            <div className="absolute z-10 w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+              <button
+                onClick={() => setAssist(team, goal.id, null, null)}
+                className="w-full text-left px-3 py-2 hover:bg-zinc-700 text-white text-sm transition-colors"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setAssist(team, goal.id, null, null);
+                  }
+                }}
+              >
+                No assist
+              </button>
+              {eligibleAssisters.map(tp => (
+                <button
+                  key={tp.id}
+                  onClick={() => setAssist(team, goal.id, tp.player.id, `${tp.player.first_name} ${tp.player.last_name}`)}
+                  className="w-full text-left px-3 py-2 hover:bg-zinc-700 text-white text-sm transition-colors"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setAssist(team, goal.id, tp.player.id, `${tp.player.first_name} ${tp.player.last_name}`);
+                    }
+                  }}
+                >
+                  {tp.player.first_name} {tp.player.last_name}
+                  {tp.number && <span className="text-gray-400 ml-2">#{tp.number}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <AnimatePresence>
@@ -177,13 +287,13 @@ export default function UpdateScoreModal({
           <div className="flex items-center justify-center gap-8 mb-8 py-6 bg-zinc-800/50 rounded-xl border border-zinc-700">
             <div className="text-center">
               <div className="text-sm text-gray-400 mb-2">Home</div>
-              <div className="text-5xl font-black text-white">{currentHomeScore}</div>
+              <div className="text-5xl font-black text-white">{homeGoals.length}</div>
               <div className="text-sm text-gray-500">{homeTeam.name}</div>
             </div>
             <div className="text-4xl font-bold text-gray-500">-</div>
             <div className="text-center">
               <div className="text-sm text-gray-400 mb-2">Away</div>
-              <div className="text-5xl font-black text-white">{currentAwayScore}</div>
+              <div className="text-5xl font-black text-white">{awayGoals.length}</div>
               <div className="text-sm text-gray-500">{awayTeam.name}</div>
             </div>
           </div>
@@ -194,36 +304,17 @@ export default function UpdateScoreModal({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              {/* Home Team Scorers */}
+              {/* Home Team */}
               <div className="bg-zinc-800/50 border border-zinc-700 rounded-xl p-6">
                 <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                   <span className="w-3 h-3 bg-blue-500 rounded-full"></span>
                   {homeTeam.name}
                 </h3>
                 
-                {/* Current Scorers */}
-                {homeScorers.length > 0 && (
+                {/* Current Goals */}
+                {homeGoals.length > 0 && (
                   <div className="mb-4 space-y-2">
-                    {homeScorers.map(scorer => (
-                      <div key={scorer.player.id} className="flex items-center justify-between bg-zinc-900/50 border border-zinc-700 rounded-lg p-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-2xl">⚽</span>
-                          <span className="text-white font-medium">
-                            {scorer.player.first_name} {scorer.player.last_name}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-yellow-400 font-bold text-xl">{scorer.goals}</span>
-                          <button
-                            onClick={() => removeScorer('home', scorer.player.id, scorer.goals)}
-                            className="p-1 hover:bg-zinc-700 rounded transition-colors"
-                            disabled={saving}
-                          >
-                            <Minus className="w-4 h-4 text-red-400" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                    {homeGoals.map(goal => renderGoalChip(goal, 'home', homePlayers))}
                   </div>
                 )}
 
@@ -232,7 +323,7 @@ export default function UpdateScoreModal({
                   {homePlayers.map(tp => (
                     <button
                       key={tp.id}
-                      onClick={() => addScorer('home', tp.player)}
+                      onClick={() => addGoal('home', tp.player)}
                       className="w-full flex items-center justify-between bg-zinc-900/50 hover:bg-zinc-900 border border-zinc-700 hover:border-yellow-500/50 rounded-lg p-3 transition-all group"
                       disabled={saving}
                     >
@@ -258,36 +349,17 @@ export default function UpdateScoreModal({
                 </div>
               </div>
 
-              {/* Away Team Scorers */}
+              {/* Away Team */}
               <div className="bg-zinc-800/50 border border-zinc-700 rounded-xl p-6">
                 <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                   <span className="w-3 h-3 bg-red-500 rounded-full"></span>
                   {awayTeam.name}
                 </h3>
                 
-                {/* Current Scorers */}
-                {awayScorers.length > 0 && (
+                {/* Current Goals */}
+                {awayGoals.length > 0 && (
                   <div className="mb-4 space-y-2">
-                    {awayScorers.map(scorer => (
-                      <div key={scorer.player.id} className="flex items-center justify-between bg-zinc-900/50 border border-zinc-700 rounded-lg p-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-2xl">⚽</span>
-                          <span className="text-white font-medium">
-                            {scorer.player.first_name} {scorer.player.last_name}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-yellow-400 font-bold text-xl">{scorer.goals}</span>
-                          <button
-                            onClick={() => removeScorer('away', scorer.player.id, scorer.goals)}
-                            className="p-1 hover:bg-zinc-700 rounded transition-colors"
-                            disabled={saving}
-                          >
-                            <Minus className="w-4 h-4 text-red-400" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                    {awayGoals.map(goal => renderGoalChip(goal, 'away', awayPlayers))}
                   </div>
                 )}
 
@@ -296,7 +368,7 @@ export default function UpdateScoreModal({
                   {awayPlayers.map(tp => (
                     <button
                       key={tp.id}
-                      onClick={() => addScorer('away', tp.player)}
+                      onClick={() => addGoal('away', tp.player)}
                       className="w-full flex items-center justify-between bg-zinc-900/50 hover:bg-zinc-900 border border-zinc-700 hover:border-yellow-500/50 rounded-lg p-3 transition-all group"
                       disabled={saving}
                     >
@@ -353,4 +425,3 @@ export default function UpdateScoreModal({
     </AnimatePresence>
   );
 }
-

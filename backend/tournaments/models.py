@@ -19,6 +19,7 @@ class Tournament(models.Model):
         ("challenge", "Challenge")
     ]
     name = models.CharField(max_length=160)
+    slug = models.SlugField(max_length=200, unique=True, blank=True, null=True)  # NEW: URL-friendly identifier
     description = models.TextField(blank=True)
     city = models.CharField(max_length=120)
     start_date = models.DateField()
@@ -51,6 +52,20 @@ class Tournament(models.Model):
     structure = models.JSONField(default=dict, blank=True)  # {rounds, groups, knockout} - format-specific config
 
     def __str__(self): return self.name
+    
+    def save(self, *args, **kwargs):
+        """Auto-generate slug from name if not provided"""
+        if not self.slug:
+            from django.utils.text import slugify
+            base_slug = slugify(self.name)
+            slug = base_slug
+            counter = 1
+            # Ensure uniqueness
+            while Tournament.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
 
 class Team(models.Model):
     name = models.CharField(max_length=160)
@@ -168,4 +183,28 @@ class TeamPlayer(models.Model):
 
     class Meta:
         unique_together = ('team', 'player')
+
+class MatchScorer(models.Model):
+    """Track which players scored in which matches"""
+    match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name='scorers')
+    player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name='match_goals')
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='match_scorers')
+    minute = models.PositiveIntegerField(null=True, blank=True)  # Optional: minute of goal
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('match', 'player', 'minute')  # Allow same player multiple times if different minutes
+
+# NEW: MatchAssist model to track assists linked to goals
+class MatchAssist(models.Model):
+    """Track assists for specific goals (linked to MatchScorer)"""
+    goal = models.OneToOneField(MatchScorer, on_delete=models.CASCADE, related_name='assist', null=True, blank=True)
+    match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name='assists')
+    player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name='match_assists', null=True, blank=True)
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='match_assists')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Allow multiple assists per match/team, but one per goal
+        unique_together = ('goal',)  # One assist per goal
 

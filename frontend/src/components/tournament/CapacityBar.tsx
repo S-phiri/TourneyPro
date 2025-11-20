@@ -12,17 +12,17 @@ export default function CapacityBar({ registered, maxCapacity, label = 'Teams' }
   const isFull = registered >= maxCapacity;
   const isNearlyFull = registered >= maxCapacity * 0.9;
 
-  // Determine color based on capacity
+  // Determine color based on capacity - Champions League gold theme
   const getBarColor = () => {
-    if (isFull) return 'bg-red-500';
-    if (isNearlyFull) return 'bg-yellow-500';
-    return 'bg-green-500';
+    if (isFull) return 'bg-gradient-to-r from-yellow-500 to-yellow-600';
+    if (isNearlyFull) return 'bg-gradient-to-r from-yellow-500/80 to-yellow-600/80';
+    return 'bg-gradient-to-r from-yellow-500/60 to-yellow-600/60';
   };
 
   const getTextColor = () => {
-    if (isFull) return 'text-red-400';
+    if (isFull) return 'text-yellow-400';
     if (isNearlyFull) return 'text-yellow-400';
-    return 'text-green-400';
+    return 'text-yellow-500';
   };
 
   return (
@@ -53,7 +53,7 @@ export default function CapacityBar({ registered, maxCapacity, label = 'Teams' }
       {/* Status Message */}
       <div className="mt-3 text-center">
         {isFull ? (
-          <p className="text-sm font-medium text-red-400">
+          <p className="text-sm font-medium text-yellow-400">
             🎉 Tournament is full!
           </p>
         ) : isNearlyFull ? (
@@ -61,7 +61,7 @@ export default function CapacityBar({ registered, maxCapacity, label = 'Teams' }
             ⚠️ Only {maxCapacity - registered} spot{maxCapacity - registered !== 1 ? 's' : ''} remaining
           </p>
         ) : (
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-yellow-500/80">
             {maxCapacity - registered} spot{maxCapacity - registered !== 1 ? 's' : ''} available
           </p>
         )}

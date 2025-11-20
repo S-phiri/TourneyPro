@@ -1,6 +1,7 @@
 // src/pages/Fixtures.tsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
 import { listMatches, createMatch, updateMatch, Match, CreateMatchData } from '../lib/matches';
@@ -128,19 +129,26 @@ const Fixtures: React.FC = () => {
     }
   };
 
-  const handleSaveScore = async (scores: { home: number; away: number }, scorers: { home: number[]; away: number[] }) => {
+  const handleSaveScore = async (
+    scores: { home: number; away: number }, 
+    scorers: { home: number[]; away: number[] },
+    assists: { home: (number | null)[]; away: (number | null)[] } // NEW: assists parameter
+  ) => {
     if (!editingMatch) return;
     
     try {
-      await updateMatch(editingMatch.id, {
-        home_score: scores.home,
-        away_score: scores.away,
-        status: 'finished'
+      // Use the score endpoint which handles scorers and assists
+      await api(`/matches/${editingMatch.id}/score/`, {
+        method: 'POST',
+        body: JSON.stringify({
+          home_score: scores.home,
+          away_score: scores.away,
+          home_scorers: scorers.home,
+          away_scorers: scorers.away,
+          home_assists: assists.home, // NEW: Send assists
+          away_assists: assists.away   // NEW: Send assists
+        })
       });
-      
-      // TODO: Update player goals in backend
-      // For now, we'll just log the scorers
-      console.log('Scorers:', scorers);
       
       setEditingMatch(null);
       setShowScoreModal(false);
@@ -181,7 +189,65 @@ const Fixtures: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+    <div className="min-h-screen relative">
+      {/* Background Gradient - Lighter black */}
+      <div className="fixed inset-0 bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 -z-10" />
+      
+      {/* Subtle Football Field Lines Background */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[1] opacity-10">
+        <svg className="absolute inset-0 w-full h-full" style={{ mixBlendMode: 'overlay' }}>
+          {/* Center circle */}
+          <circle cx="50%" cy="50%" r="15%" fill="none" stroke="rgba(234, 179, 8, 0.3)" strokeWidth="1" />
+          {/* Center line */}
+          <line x1="50%" y1="0" x2="50%" y2="100%" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          {/* Penalty boxes */}
+          <rect x="0" y="30%" width="20%" height="40%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          <rect x="80%" y="30%" width="20%" height="40%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          {/* Goal boxes */}
+          <rect x="0" y="40%" width="8%" height="20%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          <rect x="92%" y="40%" width="8%" height="20%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+        </svg>
+      </div>
+      
+      {/* Subtle Faint Lights */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[1]">
+        {[...Array(30)].map((_, i) => {
+          const baseX = (i * 6) % 100;
+          const baseY = (i * 8) % 100;
+          const size = 2 + (i % 2); // 2-3px - much smaller
+          const duration = 4 + (i % 3);
+          const delay = (i * 0.2) % 2;
+          
+          return (
+            <motion.div
+              key={i}
+              className="absolute rounded-full"
+              style={{
+                left: `${baseX}%`,
+                top: `${baseY}%`,
+                width: `${size}px`,
+                height: `${size}px`,
+                background: 'rgba(234, 179, 8, 0.3)',
+                boxShadow: '0 0 4px rgba(234, 179, 8, 0.4)',
+              }}
+              initial={{
+                opacity: 0.2,
+              }}
+              animate={{
+                opacity: [0.2, 0.4, 0.2],
+                scale: [1, 1.2, 1],
+              }}
+              transition={{
+                duration: duration,
+                repeat: Infinity,
+                ease: "easeInOut",
+                delay: delay,
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="relative z-10">
       {/* Tournament Navigation */}
       <TournamentNav tournamentId={tournament.id} />
 
@@ -375,6 +441,7 @@ const Fixtures: React.FC = () => {
           onSave={handleSaveScore}
         />
       )}
+      </div>
     </div>
   );
 };

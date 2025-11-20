@@ -1,6 +1,8 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { WizardState, Format } from './TournamentWizard';
+// NEW: Import combination type utilities
+import { getCombinationTypeOptions, CombinationType } from '../../../utils/tournamentFormats';
 
 interface StepFormatProps {
   state: WizardState;
@@ -36,10 +38,23 @@ export default function StepFormat({ state, updateState }: StepFormatProps) {
   ];
 
   const handleSelect = (format: Format) => {
+    const newStructure = format === 'combination' 
+      ? { ...state.structure, combination_type: state.structure?.combination_type || 'combinationA' }
+      : {};
+    
     updateState({
       format,
-      // Reset structure when format changes (keep basics/rules)
-      structure: {},
+      structure: newStructure,
+    });
+  };
+
+  // NEW: Handle combination sub-type selection
+  const handleCombinationTypeChange = (combinationType: CombinationType) => {
+    updateState({
+      structure: {
+        ...state.structure,
+        combination_type: combinationType,
+      },
     });
   };
 
@@ -82,6 +97,53 @@ export default function StepFormat({ state, updateState }: StepFormatProps) {
           </motion.button>
         ))}
       </div>
+
+      {/* NEW: Combination sub-type selection when combination is selected */}
+      {state.format === 'combination' && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-8 bg-zinc-800/50 border border-yellow-500/30 rounded-xl p-6"
+        >
+          <h3 className="text-xl font-bold text-white mb-4">Combination Format Type</h3>
+          <p className="text-gray-400 mb-4">Choose how the combination format will work:</p>
+          
+          <div className="space-y-3">
+            {getCombinationTypeOptions().map((option) => (
+              <motion.button
+                key={option.value}
+                onClick={() => handleCombinationTypeChange(option.value)}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.99 }}
+                className={`w-full p-4 rounded-lg border-2 text-left transition-all ${
+                  state.structure?.combination_type === option.value
+                    ? 'border-yellow-500 bg-yellow-500/10'
+                    : 'border-zinc-700 bg-zinc-900/50 hover:border-zinc-600'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold text-white mb-1">{option.label}</div>
+                    {option.value === 'combinationA' && (
+                      <div className="text-sm text-gray-400">
+                        All teams play in one league table, top teams qualify for knockout
+                      </div>
+                    )}
+                    {option.value === 'combinationB' && (
+                      <div className="text-sm text-gray-400">
+                        Teams divided into groups, top 2 from each group advance to knockout
+                      </div>
+                    )}
+                  </div>
+                  {state.structure?.combination_type === option.value && (
+                    <div className="text-yellow-500 font-bold">✓</div>
+                  )}
+                </div>
+              </motion.button>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       <div className="mt-8 text-center">
         <a

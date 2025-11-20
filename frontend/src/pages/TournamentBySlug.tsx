@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { api, getTournamentStandings, getTournamentTopScorers, getTournamentRole, generateFixtures } from '../lib/api';
 import { Tournament } from '../types/tournament';
@@ -16,6 +17,7 @@ import Gallery from '../components/tournament/Gallery';
 import SponsorsMarquee from '../components/tournament/SponsorsMarquee';
 import ContactBar from '../components/tournament/ContactBar';
 import MobileStickyCTA from '../components/tournament/MobileStickyCTA';
+import TournamentNav from '../components/tournament/TournamentNav';
 // Loading spinner component
 const LoadingSpinner = () => (
   <div className="flex justify-center items-center min-h-64">
@@ -55,7 +57,8 @@ const ErrorAlert = ({ message, onRetry }: { message: string; onRetry: () => void
 const TournamentBySlug: React.FC = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
-  const { isOrganizer, getTournamentRole, user } = useAuth();
+  // NEW: Pull auth state to gate manager registration
+  const { isOrganizer, getTournamentRole, user, isAuthenticated, roleHint } = useAuth();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [registrations, setRegistrations] = useState<any[]>([]);
   const [matches, setMatches] = useState<any[]>([]);
@@ -114,7 +117,31 @@ const TournamentBySlug: React.FC = () => {
   }, [slug]);
 
   const handleRegisterTeam = () => {
-    navigate(`/tournaments/${tournament?.id}/register`);
+    if (!tournament?.id) return;
+    const registrationPath = `/tournaments/${tournament.id}/register`;
+
+    // NEW: Require manager authentication before registration
+    if (!isAuthenticated) {
+      navigate('/manager/login', {
+        state: {
+          from: { pathname: registrationPath },
+          message: 'Sign in as a manager to register your team.',
+        },
+      });
+      return;
+    }
+
+    if (roleHint !== 'manager') {
+      navigate(`/manager/signup?redirect=${encodeURIComponent(registrationPath)}`, {
+        state: {
+          from: { pathname: registrationPath },
+          message: 'Create a manager account before registering a team.',
+        },
+      });
+      return;
+    }
+
+    navigate(registrationPath);
   };
 
   const handleBackToLeagues = () => {
@@ -224,7 +251,65 @@ const TournamentBySlug: React.FC = () => {
     : '27123456789';
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+    <div className="min-h-screen relative">
+      {/* Background Gradient - Lighter black */}
+      <div className="fixed inset-0 bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-900 -z-10" />
+      
+      {/* Subtle Football Field Lines Background */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[1] opacity-10">
+        <svg className="absolute inset-0 w-full h-full" style={{ mixBlendMode: 'overlay' }}>
+          {/* Center circle */}
+          <circle cx="50%" cy="50%" r="15%" fill="none" stroke="rgba(234, 179, 8, 0.3)" strokeWidth="1" />
+          {/* Center line */}
+          <line x1="50%" y1="0" x2="50%" y2="100%" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          {/* Penalty boxes */}
+          <rect x="0" y="30%" width="20%" height="40%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          <rect x="80%" y="30%" width="20%" height="40%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          {/* Goal boxes */}
+          <rect x="0" y="40%" width="8%" height="20%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+          <rect x="92%" y="40%" width="8%" height="20%" fill="none" stroke="rgba(234, 179, 8, 0.2)" strokeWidth="1" />
+        </svg>
+      </div>
+      
+      {/* Subtle Faint Lights */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-[1]">
+        {[...Array(30)].map((_, i) => {
+          const baseX = (i * 6) % 100;
+          const baseY = (i * 8) % 100;
+          const size = 2 + (i % 2); // 2-3px - much smaller
+          const duration = 4 + (i % 3);
+          const delay = (i * 0.2) % 2;
+          
+          return (
+            <motion.div
+              key={i}
+              className="absolute rounded-full"
+              style={{
+                left: `${baseX}%`,
+                top: `${baseY}%`,
+                width: `${size}px`,
+                height: `${size}px`,
+                background: 'rgba(234, 179, 8, 0.3)',
+                boxShadow: '0 0 4px rgba(234, 179, 8, 0.4)',
+              }}
+              initial={{
+                opacity: 0.2,
+              }}
+              animate={{
+                opacity: [0.2, 0.4, 0.2],
+                scale: [1, 1.2, 1],
+              }}
+              transition={{
+                duration: duration,
+                repeat: Infinity,
+                ease: "easeInOut",
+                delay: delay,
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="relative z-10">
       {/* Tournament Navigation */}
       <TournamentNav tournamentSlug={slug} />
 
@@ -256,14 +341,14 @@ const TournamentBySlug: React.FC = () => {
               <div className="flex items-center gap-3">
                 {tournamentRole.is_organiser && (
                   <span className="px-4 py-2 bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border border-yellow-500/50 rounded-full text-yellow-400 font-semibold text-sm">
-                    👑 Organiser
+                    Organiser
                   </span>
                 )}
-                {tournamentRole.is_manager && !tournamentRole.is_organiser && (
-                  <span className="px-4 py-2 bg-gradient-to-r from-blue-500/20 to-blue-600/20 border border-blue-500/50 rounded-full text-blue-400 font-semibold text-sm">
-                    ⚽ Manager
-                  </span>
-                )}
+                    {tournamentRole.is_manager && !tournamentRole.is_organiser && (
+                      <span className="px-4 py-2 bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border border-yellow-500/50 rounded-full text-yellow-400 font-semibold text-sm">
+                        Manager
+                      </span>
+                    )}
               </div>
 
               {/* Organiser Actions */}
@@ -273,7 +358,7 @@ const TournamentBySlug: React.FC = () => {
                     onClick={() => navigate(`/tournaments/${tournament.id}/edit`)}
                     className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-white text-sm font-medium transition-colors"
                   >
-                    ✏️ Edit Tournament
+                    Edit Tournament
                   </button>
                   {arr(registrations).length >= (Number(tournament.team_max) || 0) && (
                     <button
@@ -288,14 +373,14 @@ const TournamentBySlug: React.FC = () => {
                       }}
                       className="px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-lg text-sm font-bold transition-colors"
                     >
-                      🎯 Generate Fixtures
+                      Generate Fixtures
                     </button>
                   )}
                   <button
                     onClick={() => navigate(`/tournaments/${tournament.id}/fixtures`)}
                     className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-white text-sm font-medium transition-colors"
                   >
-                    📊 Manage Fixtures
+                    Manage Fixtures
                   </button>
                 </div>
               )}
@@ -313,9 +398,9 @@ const TournamentBySlug: React.FC = () => {
                       navigate(`/teams/${managerTeam.team.id}`);
                     }
                   }}
-                  className="px-4 py-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg text-sm font-bold transition-colors"
+                  className="px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-lg text-sm font-bold transition-all shadow-lg shadow-yellow-500/20"
                 >
-                  ⚽ Manage Team
+                  Manage Team
                 </button>
               )}
             </div>
@@ -436,6 +521,7 @@ const TournamentBySlug: React.FC = () => {
         entryFee={formatCurrency(tournament.entry_fee)}
         onRegisterClick={handleRegisterTeam}
       />
+      </div>
     </div>
   );
 };

@@ -5,11 +5,15 @@ import { useState, useEffect } from "react";
 interface MobileStickyCTAProps {
   entryFee?: string;
   onRegisterClick?: () => void;
+  disabled?: boolean;
+  buttonText?: string;
 }
 
 export default function MobileStickyCTA({
   entryFee = "R2500",
-  onRegisterClick = () => {}
+  onRegisterClick = () => {},
+  disabled = false,
+  buttonText = "Register Team"
 }: MobileStickyCTAProps) {
   const [isVisible, setIsVisible] = useState(false);
 
@@ -36,9 +40,14 @@ export default function MobileStickyCTA({
         </div>
         <Button
           onClick={onRegisterClick}
-          className="bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold px-8"
+          disabled={disabled}
+          className={`font-bold px-8 ${
+            disabled
+              ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+              : 'bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black'
+          }`}
         >
-          Register Team
+          {buttonText}
         </Button>
       </div>
     </motion.div>

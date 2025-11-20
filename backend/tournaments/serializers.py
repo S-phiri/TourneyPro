@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.utils import timezone
-from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer
+from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer, MatchScorer, MatchAssist
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -148,10 +148,56 @@ class MatchSerializer(serializers.ModelSerializer):
     home_team = TeamSerializer(read_only=True)
     away_team = TeamSerializer(read_only=True)
     tournament = TournamentSerializer(read_only=True)
+    # NEW: Include scorer and assist data
+    scorers = serializers.SerializerMethodField()
+    assists = serializers.SerializerMethodField()
     
     class Meta: 
         model = Match
         fields = "__all__"
+    
+    def get_scorers(self, obj):
+        """Get all scorers for this match with their assists"""
+        scorers_data = []
+        for scorer in obj.scorers.all():
+            scorer_info = {
+                'id': scorer.id,
+                'player_id': scorer.player.id,
+                'player_name': f"{scorer.player.first_name} {scorer.player.last_name}".strip(),
+                'team_id': scorer.team.id,
+                'team_name': scorer.team.name,
+                'minute': scorer.minute,
+            }
+            # Check if this goal has an assist
+            try:
+                assist = scorer.assist
+                if assist and assist.player:
+                    scorer_info['assist'] = {
+                        'player_id': assist.player.id,
+                        'player_name': f"{assist.player.first_name} {assist.player.last_name}".strip(),
+                    }
+            except MatchAssist.DoesNotExist:
+                pass
+            except AttributeError:
+                # Handle case where assist relationship doesn't exist
+                pass
+            scorers_data.append(scorer_info)
+        return scorers_data
+    
+    def get_assists(self, obj):
+        """Get all assists for this match"""
+        assists_data = []
+        for assist in obj.assists.all():
+            if assist.player:  # Only include assists with a player
+                assists_data.append({
+                    'id': assist.id,
+                    'player_id': assist.player.id,
+                    'player_name': f"{assist.player.first_name} {assist.player.last_name}".strip(),
+                    'team_id': assist.team.id,
+                    'team_name': assist.team.name,
+                    'goal_id': assist.goal.id if assist.goal else None,
+                })
+        return assists_data
 
 class TeamInlineSerializer(serializers.Serializer):
     """Serializer for team data when creating a registration"""
@@ -187,6 +233,7 @@ class RegistrationCreateSerializer(serializers.Serializer):
     def validate(self, attrs):
         tournament_id = attrs['tournament_id']
         manager_email = attrs['team']['manager_email']
+        request = self.context.get('request')
         
         try:
             tournament = Tournament.objects.get(id=tournament_id)
@@ -198,13 +245,23 @@ class RegistrationCreateSerializer(serializers.Serializer):
         if current_registrations >= tournament.team_max:
             raise serializers.ValidationError("Tournament is full.")
         
-        # Check if email is already registered for this tournament
-        existing_registration = Registration.objects.filter(
+        # NEW: If user is authenticated, check by manager_user first (more reliable)
+        if request and request.user.is_authenticated:
+            existing_by_user = Registration.objects.filter(
+                tournament_id=tournament_id,
+                team__manager_user=request.user
+            ).exists()
+            
+            if existing_by_user:
+                raise serializers.ValidationError("You have already registered a team for this tournament.")
+        
+        # Also check if email is already registered for this tournament (backward compatibility)
+        existing_by_email = Registration.objects.filter(
             tournament_id=tournament_id,
             team__manager_email=manager_email
         ).exists()
         
-        if existing_registration:
+        if existing_by_email:
             raise serializers.ValidationError("A team with this email is already registered for this tournament.")
         
         return attrs
@@ -310,6 +367,18 @@ class RegistrationCreateSerializer(serializers.Serializer):
             team=team,
             status='pending'
         )
+        
+        # NEW: Send registration confirmation email to manager
+        try:
+            from .emails import send_registration_confirmation, send_new_registration_notification
+            send_registration_confirmation(registration)
+            
+            # Also notify organizer if they have an email
+            if tournament.organizer and tournament.organizer.email:
+                send_new_registration_notification(registration, tournament.organizer.email)
+        except Exception as e:
+            # Don't fail registration if email fails
+            print(f"Failed to send registration emails: {e}")
         
         # Store tokens and user_created flag in registration for response
         registration._tokens = tokens

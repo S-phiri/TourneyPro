@@ -1,0 +1,51 @@
+# Production settings example
+# Copy this to settings_production.py and fill in your values
+# Or use environment variables
+
+import os
+from pathlib import Path
+from .settings import *
+
+# Override for production
+DEBUG = False
+SECRET_KEY = os.environ.get('SECRET_KEY', 'CHANGE-THIS-IN-PRODUCTION')
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+
+# Database - Use PostgreSQL in production
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('DB_NAME', 'tournament_db'),
+        'USER': os.environ.get('DB_USER', 'tournament_user'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '5432'),
+    }
+}
+
+# Email Configuration (use environment variables)
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@yoursite.com')
+
+# CORS - Update with your production domain
+CORS_ALLOWED_ORIGINS = [
+    os.environ.get('FRONTEND_URL', 'https://yoursite.com'),
+]
+CSRF_TRUSTED_ORIGINS = [
+    os.environ.get('FRONTEND_URL', 'https://yoursite.com'),
+]
+
+# Static files
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_URL = '/static/'
+
+# Security settings
+SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'False') == 'True'
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+

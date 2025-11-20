@@ -95,7 +95,7 @@ export default function TournamentNav({
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={handleLogout}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-lg shadow-red-600/20"
+                  className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 hover:border-yellow-500/50 text-white rounded-lg font-medium transition-all shadow-lg shadow-zinc-900/50"
                 >
                   <LogOut className="w-4 h-4" />
                   Logout

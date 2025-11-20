@@ -16,6 +16,7 @@ export interface User {
 
 export interface Tournament {
   id: number;
+  slug?: string;  // NEW: URL-friendly identifier
   name: string;
   description?: string;
   city: string;

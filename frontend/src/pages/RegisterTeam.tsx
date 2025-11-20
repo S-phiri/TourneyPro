@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { api, registerTeamToTournament } from '../lib/api';
 import { Tournament } from '../types/tournament';
 import { formatDate, formatCurrency, getDaysUntilDeadline, getDeadlineColor } from '../lib/helpers';
@@ -26,7 +26,9 @@ interface FormErrors {
 const RegisterTeam: React.FC = () => {
   const { id, slug } = useParams<{ id?: string; slug?: string }>();
   const navigate = useNavigate();
-  const { isAuthenticated, getMe, login } = useAuth();
+  const location = useLocation();
+  const { isAuthenticated, roleHint, getMe, user, isLoading } = useAuth();
+  const isManager = isAuthenticated && roleHint === 'manager';
   
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [formData, setFormData] = useState<TeamFormData>({
@@ -44,6 +46,40 @@ const RegisterTeam: React.FC = () => {
   const [teamId, setTeamId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // NEW: Ensure only authenticated managers can access this page
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    const targetPath = id
+      ? `/tournaments/${id}/register`
+      : slug
+        ? `/t/${slug}/register`
+        : location.pathname;
+
+    if (!isAuthenticated) {
+      navigate('/manager/login', {
+        replace: true,
+        state: {
+          from: { pathname: targetPath },
+          message: 'Sign in as a manager to register your team.',
+        },
+      });
+      return;
+    }
+
+    if (!isManager) {
+      navigate('/manager/signup', {
+        replace: true,
+        state: {
+          from: { pathname: targetPath },
+          message: 'Create a manager account before registering a team.',
+        },
+      });
+    }
+  }, [isLoading, isAuthenticated, isManager, navigate, id, slug, location.pathname]);
 
   useEffect(() => {
     const fetchTournament = async () => {
@@ -76,6 +112,21 @@ const RegisterTeam: React.FC = () => {
     fetchTournament();
   }, [id, slug]);
 
+  // NEW: Prefill manager details from authenticated user
+  useEffect(() => {
+    if (!isManager || !user) {
+      return;
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      manager_email: prev.manager_email || user.email || '',
+      manager_name:
+        prev.manager_name || [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.username || '',
+      manager_password: '',
+    }));
+  }, [isManager, user]);
+
   const validateEmail = (email: string): boolean => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
@@ -98,10 +149,12 @@ const RegisterTeam: React.FC = () => {
       newErrors.manager_email = 'Please enter a valid email address';
     }
     
-    if (!formData.manager_password.trim()) {
-      newErrors.manager_password = 'Password is required';
-    } else if (formData.manager_password.length < 8) {
-      newErrors.manager_password = 'Password must be at least 8 characters';
+    if (!isManager) {
+      if (!formData.manager_password.trim()) {
+        newErrors.manager_password = 'Password is required';
+      } else if (formData.manager_password.length < 8) {
+        newErrors.manager_password = 'Password must be at least 8 characters';
+      }
     }
     
     if (formData.phone && !/^[\d\s\-\+\(\)]+$/.test(formData.phone)) {
@@ -134,16 +187,30 @@ const RegisterTeam: React.FC = () => {
     setError(null);
 
     try {
-          const response: any = await registerTeamToTournament(tournamentId, {
-            team: {
-              name: formData.name.trim(),
-              manager_name: formData.manager_name.trim(),
-              manager_email: formData.manager_email.trim(),
-              manager_password: formData.manager_password.trim(),
-              phone: formData.phone.trim() || undefined,
-            },
-            note: formData.note.trim() || undefined,
-          });
+      const teamPayload: {
+        name: string;
+        manager_name: string;
+        manager_email: string;
+        manager_password?: string;
+        phone?: string;
+      } = {
+        name: formData.name.trim(),
+        manager_name: formData.manager_name.trim(),
+        manager_email: formData.manager_email.trim(),
+      };
+
+      if (!isManager && formData.manager_password.trim()) {
+        teamPayload.manager_password = formData.manager_password.trim();
+      }
+
+      if (formData.phone.trim()) {
+        teamPayload.phone = formData.phone.trim();
+      }
+
+      const response: any = await registerTeamToTournament(tournamentId, {
+        team: teamPayload,
+        note: formData.note.trim() || undefined,
+      });
       
       // Store registration ID and team ID for success screen
       setRegistrationId(response.registration_id);
@@ -169,13 +236,22 @@ const RegisterTeam: React.FC = () => {
         }
       }
       
-      // Show success screen instead of redirecting immediately
+      // Show success screen briefly, then redirect to tournament
       setIsSubmitted(true);
       
       // Fire success analytics event
       if (typeof window !== 'undefined' && window.dataLayer) {
         window.dataLayer.push({ event: 'team_register_success' });
       }
+      
+      // NEW: Automatically redirect to the tournament page after 2 seconds
+      setTimeout(() => {
+        if (slug) {
+          navigate(`/t/${slug}?registered=1`);
+        } else if (tournamentId) {
+          navigate(`/tournaments/${tournamentId}?registered=1`);
+        }
+      }, 2000);
     } catch (err: any) {
       // Parse error message from backend
       let errorMessage = 'Failed to register team. Please try again.';
@@ -272,8 +348,11 @@ const RegisterTeam: React.FC = () => {
                 <p className="text-lg text-gray-700 mb-2">
                   Your team has been registered for <span className="font-semibold">{tournament.name}</span>.
                 </p>
-                <p className="text-sm text-gray-600 mb-4">
+                <p className="text-sm text-gray-600 mb-2">
                   You can now manage your team, add players, and complete payment when ready.
+                </p>
+                <p className="text-xs text-yellow-600 font-medium mb-4">
+                  Redirecting to tournament page...
                 </p>
                 {registrationId && (
                   <p className="text-xs text-gray-500">
@@ -447,31 +526,36 @@ const RegisterTeam: React.FC = () => {
                     className={`form-input w-full ${errors.manager_email ? 'border-red-500' : ''}`}
                     placeholder="Enter email address"
                     required
-                    disabled={loading || registrationClosed}
+                    disabled={loading || registrationClosed || isManager}
                   />
                   {errors.manager_email && <p className="mt-1 text-sm text-red-600">{errors.manager_email}</p>}
+                  {isManager && (
+                    <p className="mt-1 text-xs text-gray-500">Using your signed-in manager account email.</p>
+                  )}
                 </div>
 
-                {/* Manager Password */}
-                <div>
-                  <label htmlFor="manager_password" className="block text-sm font-medium text-gray-700 mb-2">
-                    Password <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    id="manager_password"
-                    name="manager_password"
-                    value={formData.manager_password}
-                    onChange={handleChange}
-                    onBlur={() => handleBlur('manager_password')}
-                    className={`form-input w-full ${errors.manager_password ? 'border-red-500' : ''}`}
-                    placeholder="Create a password (min 8 characters)"
-                    required
-                    disabled={loading || registrationClosed}
-                  />
-                  {errors.manager_password && <p className="mt-1 text-sm text-red-600">{errors.manager_password}</p>}
-                  <p className="mt-1 text-xs text-gray-500">You'll use this to log in and manage your team</p>
-                </div>
+                {/* Manager Password - only for new accounts */}
+                {!isManager && (
+                  <div>
+                    <label htmlFor="manager_password" className="block text-sm font-medium text-gray-700 mb-2">
+                      Password <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      id="manager_password"
+                      name="manager_password"
+                      value={formData.manager_password}
+                      onChange={handleChange}
+                      onBlur={() => handleBlur('manager_password')}
+                      className={`form-input w-full ${errors.manager_password ? 'border-red-500' : ''}`}
+                      placeholder="Create a password (min 8 characters)"
+                      required
+                      disabled={loading || registrationClosed}
+                    />
+                    {errors.manager_password && <p className="mt-1 text-sm text-red-600">{errors.manager_password}</p>}
+                    <p className="mt-1 text-xs text-gray-500">You'll use this to log in and manage your team</p>
+                  </div>
+                )}
 
                 {/* Phone */}
                 <div>
