@@ -350,3 +350,21 @@ export async function simulateRound(tournamentId: number) {
   }
   return res.json();
 }
+
+export async function clearFixtures(tournamentId: number): Promise<{ detail: string; matches_deleted: number }> {
+  const token = getAuthToken();
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/clear-fixtures/`, {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || 'Failed to clear fixtures');
+  }
+  return res.json();
+}

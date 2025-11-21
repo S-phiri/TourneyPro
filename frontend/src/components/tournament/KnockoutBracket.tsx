@@ -23,8 +23,9 @@ interface KnockoutBracketProps {
   matches: Match[];
 }
 
-// Get round name based on number of teams in that round
-const getRoundName = (numTeams: number, isFirstRound: boolean): string => {
+// Get round name based on actual number of teams in that round
+// Since we only allow power-of-2 sizes, all sizes are standard
+const getRoundName = (numTeams: number): string => {
   if (numTeams === 2) {
     return "Final";
   } else if (numTeams === 4) {
@@ -38,30 +39,19 @@ const getRoundName = (numTeams: number, isFirstRound: boolean): string => {
   } else if (numTeams === 64) {
     return "Round of 64";
   } else {
-    // For non-standard sizes, use descriptive names based on number of teams
-    if (numTeams <= 4) {
-      return isFirstRound ? "Semi-Finals" : "Final";
-    } else if (numTeams <= 8) {
-      return isFirstRound ? "Quarter-Finals" : (numTeams === 4 ? "Semi-Finals" : "Final");
-    } else if (numTeams <= 16) {
-      return isFirstRound ? "Round of 16" : (numTeams === 8 ? "Quarter-Finals" : (numTeams === 4 ? "Semi-Finals" : "Final"));
-    } else {
-      return `Round of ${numTeams}`;
-    }
+    // Should never reach here with power-of-2 restriction, but handle gracefully
+    return `Round of ${numTeams}`;
   }
 };
 
-// Round names for different bracket sizes
+// Round names for different bracket sizes (for reference, not used in current implementation)
 const getRoundNames = (numTeams: number): string[] => {
   const rounds: string[] = [];
   let current = numTeams;
-  let roundIndex = 0;
   
   while (current > 1) {
-    const isFirstRound = roundIndex === 0;
-    rounds.push(getRoundName(current, isFirstRound));
+    rounds.push(getRoundName(current));
     current = Math.floor(current / 2);
-    roundIndex++;
   }
   
   return rounds; // Keep in order from first round to final
@@ -110,13 +100,14 @@ const organizeMatchesByRound = (matches: Match[]): Record<string, Match[]> => {
     }
   });
   
-  // Convert round numbers to proper names based on number of teams in that round
+  // Convert round numbers to proper names based on actual number of teams in that round
   Object.keys(matchesByRound).forEach(roundKey => {
     const roundMatches = matchesByRound[roundKey];
-    const teamsInRound = roundMatches.length * 2; // Each match has 2 teams
+    // Each match has 2 teams, so teams in round = matches * 2
+    const teamsInRound = roundMatches.length * 2;
     
-    // Get proper round name
-    const roundName = getRoundName(teamsInRound, roundKey === 'Round 1');
+    // Get round name based on actual team count
+    const roundName = getRoundName(teamsInRound);
     rounds[roundName] = roundMatches;
   });
   

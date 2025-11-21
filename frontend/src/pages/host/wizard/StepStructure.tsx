@@ -11,26 +11,42 @@ export default function StepStructure({ state, updateState }: StepStructureProps
   useEffect(() => {
     const teamCapacity = state.basics.team_capacity || 8;
     
+    // Helper function to get nearest power-of-2
+    const getNearestPowerOf2 = (num: number): number => {
+      const powersOf2 = [4, 8, 16, 32, 64];
+      return powersOf2.reduce((prev, curr) => 
+        Math.abs(curr - num) < Math.abs(prev - num) ? curr : prev
+      );
+    };
+    
     if (state.format === 'league' && !state.structure.rounds) {
       updateState({
         structure: { ...state.structure, rounds: 1 },
       });
     } else if (state.format === 'knockout' && !state.structure.knockout) {
-      // Auto-set bracket size to match team capacity
+      // Auto-set bracket size to nearest power-of-2
+      const nearestPowerOf2 = getNearestPowerOf2(teamCapacity);
       updateState({
         structure: {
           ...state.structure,
-          knockout: { bracket_size: teamCapacity, single_leg: true, third_place: false },
+          knockout: { bracket_size: nearestPowerOf2, single_leg: true, third_place: false },
         },
       });
-    } else if (state.format === 'knockout' && state.structure.knockout && state.structure.knockout.bracket_size !== teamCapacity) {
-      // Update bracket size if team capacity changed
-      updateState({
-        structure: {
-          ...state.structure,
-          knockout: { ...state.structure.knockout, bracket_size: teamCapacity },
-        },
-      });
+    } else if (state.format === 'knockout' && state.structure.knockout) {
+      // Update bracket size if team capacity changed - round to nearest power-of-2
+      const nearestPowerOf2 = getNearestPowerOf2(teamCapacity);
+      const validSizes = [4, 8, 16, 32, 64];
+      const currentBracketSize = state.structure.knockout.bracket_size;
+      
+      // Only update if current bracket size is not a valid power-of-2 or doesn't match nearest
+      if (!validSizes.includes(currentBracketSize) || currentBracketSize !== nearestPowerOf2) {
+        updateState({
+          structure: {
+            ...state.structure,
+            knockout: { ...state.structure.knockout, bracket_size: nearestPowerOf2 },
+          },
+        });
+      }
     } else if (state.format === 'combination' && (!state.structure.groups || !state.structure.knockout)) {
       updateState({
         structure: {
@@ -120,24 +136,36 @@ export default function StepStructure({ state, updateState }: StepStructureProps
         {/* Knockout Format */}
         {state.format === 'knockout' && (() => {
           const teamCapacity = state.basics.team_capacity || 8;
-          // Generate bracket size options: include team capacity and standard power-of-2 options
-          const bracketOptions = [];
-          const standardSizes = [4, 8, 16, 32];
           
-          // Add team capacity if it's not already in standard sizes
-          if (!standardSizes.includes(teamCapacity)) {
-            bracketOptions.push(teamCapacity);
+          // Helper function to get nearest power-of-2
+          const getNearestPowerOf2 = (num: number): number => {
+            const powersOf2 = [4, 8, 16, 32, 64];
+            return powersOf2.reduce((prev, curr) => 
+              Math.abs(curr - num) < Math.abs(prev - num) ? curr : prev
+            );
+          };
+          
+          // Only allow power-of-2 bracket sizes: 4, 8, 16, 32, 64
+          const validBracketSizes = [4, 8, 16, 32, 64];
+          const nearestValid = getNearestPowerOf2(teamCapacity);
+          const recommendedSize = validBracketSizes.includes(teamCapacity) ? teamCapacity : nearestValid;
+          
+          // Filter to only show valid sizes <= team capacity (or nearest if capacity is higher)
+          const bracketOptions = validBracketSizes.filter(size => size <= Math.max(teamCapacity, nearestValid));
+          
+          // If no valid sizes found, show at least the nearest one
+          if (bracketOptions.length === 0) {
+            bracketOptions.push(nearestValid);
           }
           
-          // Add standard sizes that are <= team capacity
-          standardSizes.forEach(size => {
-            if (size <= teamCapacity && !bracketOptions.includes(size)) {
-              bracketOptions.push(size);
-            }
-          });
+          // Ensure recommended size is in options
+          if (!bracketOptions.includes(recommendedSize)) {
+            bracketOptions.push(recommendedSize);
+            bracketOptions.sort((a, b) => a - b);
+          }
           
-          // Sort options
-          bracketOptions.sort((a, b) => a - b);
+          const currentBracketSize = state.structure.knockout?.bracket_size || recommendedSize;
+          const isPowerOf2 = validBracketSizes.includes(teamCapacity);
           
           return (
             <div>
@@ -146,7 +174,7 @@ export default function StepStructure({ state, updateState }: StepStructureProps
                 <div>
                   <label className="form-label text-white">Bracket Size</label>
                   <select
-                    value={state.structure.knockout?.bracket_size || teamCapacity}
+                    value={currentBracketSize}
                     onChange={(e) =>
                       handleKnockoutChange('bracket_size', parseInt(e.target.value))
                     }
@@ -154,12 +182,17 @@ export default function StepStructure({ state, updateState }: StepStructureProps
                   >
                     {bracketOptions.map(size => (
                       <option key={size} value={size}>
-                        {size} {size === teamCapacity ? '(Matches Team Capacity)' : 'Teams'}
+                        {size} Teams {size === recommendedSize ? '(Recommended)' : ''}
                       </option>
                     ))}
                   </select>
+                  {!isPowerOf2 && (
+                    <p className="text-xs text-yellow-400 mt-1">
+                      ⚠️ Team capacity ({teamCapacity}) is not a power-of-2. Recommended bracket size: {recommendedSize} teams.
+                    </p>
+                  )}
                   <p className="text-xs text-gray-400 mt-1">
-                    Number of teams in the knockout bracket (based on your team capacity: {teamCapacity} teams)
+                    Knockout brackets must be power-of-2 sizes (4, 8, 16, 32, 64) for clean progression.
                   </p>
                 </div>
 

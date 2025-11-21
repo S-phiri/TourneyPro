@@ -85,6 +85,20 @@ export default function StepBasics({ state, updateState }: StepBasicsProps) {
             />
           </div>
 
+          {/* Start Time */}
+          <div>
+            <label className="form-label text-white">
+              Start Time <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="time"
+              value={state.basics.start_time || '00:00'}
+              onChange={(e) => handleChange('start_time', e.target.value)}
+              className="form-input bg-zinc-800 border-zinc-600 text-white"
+              required
+            />
+          </div>
+
           {/* End Date */}
           <div>
             <label className="form-label text-white">
@@ -98,6 +112,25 @@ export default function StepBasics({ state, updateState }: StepBasicsProps) {
               min={state.basics.start_date}
               required
             />
+          </div>
+
+          {/* End Time */}
+          <div>
+            <label className="form-label text-white">
+              End Time <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="time"
+              value={state.basics.end_time || '23:59'}
+              onChange={(e) => handleChange('end_time', e.target.value)}
+              className="form-input bg-zinc-800 border-zinc-600 text-white"
+              required
+            />
+            {state.basics.start_date === state.basics.end_date && (
+              <p className="text-xs text-yellow-400 mt-1">
+                End time must be after start time on the same day
+              </p>
+            )}
           </div>
 
           {/* Entry Fee */}

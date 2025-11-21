@@ -35,6 +35,24 @@ class TournamentSerializer(serializers.ModelSerializer):
             'venue_id': {'required': False}
         }
     
+    def validate(self, data):
+        """Validate tournament data"""
+        # Validate knockout bracket size must be power-of-2
+        if data.get('format') == 'knockout':
+            structure = data.get('structure') or {}
+            knockout = structure.get('knockout', {})
+            bracket_size = knockout.get('bracket_size') or data.get('team_max')
+            
+            if bracket_size:
+                # Check if power-of-2
+                is_power_of_2 = bracket_size > 0 and (bracket_size & (bracket_size - 1)) == 0
+                if not is_power_of_2:
+                    valid_sizes = [4, 8, 16, 32, 64]
+                    raise serializers.ValidationError({
+                        'structure': f'Knockout bracket size must be a power of 2 (4, 8, 16, 32, 64). Got {bracket_size}.'
+                    })
+        return data
+    
     def create(self, validated_data):
         venue_id = validated_data.pop('venue_id', None)
         venue_name = validated_data.pop('venue_name', None)

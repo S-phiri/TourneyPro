@@ -28,6 +28,8 @@ interface Match {
   homeScore?: number;
   awayScore?: number;
   status: "upcoming" | "live" | "completed";
+  startedAt?: string;
+  durationMinutes?: number;
   // NEW: Individual stats
   scorers?: Array<{
     id: number;
@@ -98,6 +100,7 @@ interface TournamentTabsProps {
   teams?: Team[];
   registrations?: RegistrationWithStatus[]; // NEW: Registrations with payment status
   fixtures?: Match[];
+  liveMatches?: Match[];
   results?: Match[];
   leaderboard?: LeaderboardEntry[];
   // NEW: Support for format-based standings
@@ -160,6 +163,7 @@ export default function TournamentTabs({
   teams = defaultTeams,
   registrations, // NEW: Registrations with payment status
   fixtures = defaultFixtures,
+  liveMatches = [],
   results = defaultResults,
   leaderboard = defaultLeaderboard,
   standingsData, // NEW: Format-based standings data
@@ -180,12 +184,13 @@ export default function TournamentTabs({
     : (standingsData?.format === 'league' 
       ? (standingsData as LeagueStandingsData).standings 
       : leaderboard); // Fallback to legacy leaderboard prop
-  const [activeTab, setActiveTab] = useState<"registrations" | "fixtures" | "leaderboard" | "individual-stats">("registrations");
+  const [activeTab, setActiveTab] = useState<"registrations" | "fixtures" | "live" | "leaderboard" | "individual-stats">("registrations");
   const [activeStatTab, setActiveStatTab] = useState<"scorers" | "assists" | "clean-sheets" | "contributions">("scorers");
 
   const tabs = [
     { id: "registrations", label: "Registrations" },
     { id: "fixtures", label: "Fixtures & Results" },
+    ...(liveMatches && liveMatches.length > 0 ? [{ id: "live" as const, label: `Live (${liveMatches.length})` }] : []),
     { id: "leaderboard", label: "Standings" },
     { id: "individual-stats", label: "Individual Stats" }
   ];
@@ -300,6 +305,47 @@ export default function TournamentTabs({
                     );
                   })
                 )}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "live" && liveMatches && liveMatches.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <h3 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+                <span className="inline-block w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
+                Live Matches
+              </h3>
+              <div className="space-y-4">
+                {liveMatches.map((match) => (
+                  <motion.div
+                    key={match.id}
+                    whileHover={{ scale: 1.02 }}
+                    className="bg-red-900/20 border-2 border-red-500 rounded-lg p-4"
+                  >
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="text-red-400 font-bold animate-pulse">LIVE</span>
+                      <span className="text-gray-400 text-sm">{match.pitch}</span>
+                    </div>
+                    <div className="flex items-center justify-between mb-2">
+                      <TeamChip name={match.homeTeam.name} initials={match.homeTeam.initials} size="sm" />
+                      <span className="text-white font-bold text-xl mx-4">
+                        {match.homeScore} - {match.awayScore}
+                      </span>
+                      <TeamChip name={match.awayTeam.name} initials={match.awayTeam.initials} size="sm" />
+                    </div>
+                    {match.startedAt && match.durationMinutes && (
+                      <div className="text-xs text-gray-400 text-center mt-2">
+                        Started: {new Date(match.startedAt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}
+                        {' • '}
+                        Duration: {match.durationMinutes} min
+                      </div>
+                    )}
+                  </motion.div>
+                ))}
               </div>
             </motion.div>
           )}

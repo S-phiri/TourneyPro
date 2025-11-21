@@ -18,7 +18,9 @@ export interface WizardState {
     name: string;
     city: string;
     start_date: string;
+    start_time?: string;
     end_date: string;
+    end_time?: string;
     team_capacity: number;
     entry_fee: number;
     venue_name: string;
@@ -67,7 +69,9 @@ const defaultState: WizardState = {
     name: '',
     city: '',
     start_date: '',
+    start_time: '00:00',
     end_date: '',
+    end_time: '23:59',
     team_capacity: 8,
     entry_fee: 0,
     venue_name: '',
@@ -125,7 +129,9 @@ export default function TournamentWizard() {
           name: tournament.name || '',
           city: tournament.city || '',
           start_date: tournament.start_date || '',
+          start_time: tournament.start_time || '00:00',
           end_date: tournament.end_date || '',
+          end_time: tournament.end_time || '23:59',
           team_capacity: tournament.team_max || 8,
           entry_fee: parseFloat(tournament.entry_fee || '0'),
           venue_name: tournament.venue?.name || '',
@@ -159,7 +165,9 @@ export default function TournamentWizard() {
         name: newState.basics.name || 'Draft Tournament',
         city: newState.basics.city || '',
         start_date: newState.basics.start_date || new Date().toISOString().split('T')[0],
+        start_time: newState.basics.start_time || '00:00',
         end_date: newState.basics.end_date || new Date().toISOString().split('T')[0],
+        end_time: newState.basics.end_time || '23:59',
         team_max: newState.basics.team_capacity,
         entry_fee: newState.basics.entry_fee,
         format: newState.format,
@@ -217,6 +225,13 @@ export default function TournamentWizard() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.id, state.basics.name, state.basics.city, state.format, state.rules, state.structure]);
+  
+  // Log format changes for debugging
+  useEffect(() => {
+    if (state.format) {
+      console.log(`Tournament format: ${state.format}`);
+    }
+  }, [state.format]);
 
   const handleNext = async () => {
     if (currentStep < STEPS.length - 1) {
@@ -230,9 +245,16 @@ export default function TournamentWizard() {
             setState(updated);
           }
         } else if (state.id) {
-          // Update existing draft
+          // Update existing draft - ensure format is saved
           await autosave(state);
         }
+        
+        // Special check: if coming from format step (step 0), ensure format is saved
+        if (currentStep === 0 && state.format) {
+          console.log(`Saving format ${state.format} before moving to next step`);
+          await autosave(state);
+        }
+        
         setCurrentStep(currentStep + 1);
       }
     }

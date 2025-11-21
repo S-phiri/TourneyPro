@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.conf import settings
+from datetime import datetime
 
 class Venue(models.Model):
     name = models.CharField(max_length=120)
@@ -23,7 +24,9 @@ class Tournament(models.Model):
     description = models.TextField(blank=True)
     city = models.CharField(max_length=120)
     start_date = models.DateField()
+    start_time = models.TimeField(default=datetime.min.time(), help_text="Tournament start time")
     end_date = models.DateField()
+    end_time = models.TimeField(default=datetime.max.time(), help_text="Tournament end time")
     entry_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     team_min = models.PositiveIntegerField(default=6)
     team_max = models.PositiveIntegerField(default=10)
@@ -148,8 +151,22 @@ def generate_round_robin_fixtures(tournament):
         # rotate preserving first element
         arr = [arr[0]] + [arr[-1]] + arr[1:-1]
 
+class Referee(models.Model):
+    """Referee model for managing match officials"""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True, related_name='referee_profile')
+    username = models.CharField(max_length=100, unique=True)
+    passcode = models.CharField(max_length=50)  # Simple passcode (can be hashed later)
+    name = models.CharField(max_length=200)
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"{self.name} ({self.username})"
+
 class Match(models.Model):
-    STATUS_CHOICES=[("scheduled","Scheduled"),("finished","Finished")]
+    STATUS_CHOICES=[("scheduled","Scheduled"),("live","Live"),("finished","Finished")]
     tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE, related_name="matches")
     home_team = models.ForeignKey(Team, on_delete=models.PROTECT, related_name="home_matches")
     away_team = models.ForeignKey(Team, on_delete=models.PROTECT, related_name="away_matches")
@@ -158,6 +175,21 @@ class Match(models.Model):
     home_score = models.PositiveIntegerField(default=0)
     away_score = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="scheduled")
+    started_at = models.DateTimeField(null=True, blank=True, help_text="When match was started (set to live)")
+    duration_minutes = models.PositiveIntegerField(null=True, blank=True, help_text="Match duration in minutes")
+
+class MatchReferee(models.Model):
+    """Link referees to matches for assignment"""
+    match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name='assigned_referees')
+    referee = models.ForeignKey(Referee, on_delete=models.CASCADE, related_name='assigned_matches')
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    is_primary = models.BooleanField(default=True)  # Primary referee for the match
+    
+    class Meta:
+        unique_together = ('match', 'referee')
+    
+    def __str__(self):
+        return f"{self.referee.name} - {self.match}"
 
 # New additive player structures
 class Player(models.Model):

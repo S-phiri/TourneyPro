@@ -42,10 +42,14 @@ export default function StepFormat({ state, updateState }: StepFormatProps) {
       ? { ...state.structure, combination_type: state.structure?.combination_type || 'combinationA' }
       : {};
     
+    // Immediately update state
     updateState({
       format,
       structure: newStructure,
     });
+    
+    // Log for debugging
+    console.log(`Tournament format selected: ${format}`);
   };
 
   // NEW: Handle combination sub-type selection

@@ -8,9 +8,9 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db import models
 from django.db.models import Q
-from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer, MatchScorer, MatchAssist
+from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer, MatchScorer, MatchAssist, Referee, MatchReferee
 from .serializers import VenueSerializer, TournamentSerializer, TeamSerializer, RegistrationSerializer, MatchSerializer, UserSerializer, RegistrationCreateSerializer, PlayerSerializer, TeamPlayerSerializer
-from .permissions import IsOrganizerOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly, IsTeamManagerOrHost, IsTournamentOrganiser, IsTeamManagerOrReadOnly
+from .permissions import IsOrganizerOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly, IsTeamManagerOrHost, IsTournamentOrganiser, IsTeamManagerOrReadOnly, IsMatchRefereeOrOrganizer
 from accounts.serializers import UserWithRoleSerializer
 
 class RegisterView(APIView):
@@ -466,6 +466,63 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['post'], url_path='clear-fixtures', permission_classes=[IsAuthenticated, IsTournamentOrganiser])
+    def clear_fixtures(self, request, pk=None):
+        """Delete all matches/fixtures for tournament (organiser only)"""
+        tournament = self.get_object()
+        
+        # Check permission
+        if not request.user.is_authenticated or tournament.organizer_id != request.user.id:
+            return Response(
+                {'detail': 'Only the tournament organiser can clear fixtures'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Count matches before deletion
+        match_count = Match.objects.filter(tournament=tournament).count()
+        
+        # Delete all matches (MatchScorer and MatchAssist will be deleted via CASCADE)
+        deleted_count = Match.objects.filter(tournament=tournament).delete()[0]
+        
+        return Response({
+            'detail': f'Successfully deleted {deleted_count} matches',
+            'matches_deleted': deleted_count,
+            'tournament_id': tournament.id
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='referee-login', permission_classes=[AllowAny])
+    def referee_login(self, request):
+        """Referee login using username and passcode"""
+        username = request.data.get('username')
+        passcode = request.data.get('passcode')
+        
+        if not username or not passcode:
+            return Response(
+                {'detail': 'Username and passcode are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            referee = Referee.objects.get(username=username, is_active=True)
+            if referee.passcode == passcode:  # Simple passcode check (can be hashed later)
+                # Return referee info and assigned matches
+                matches = Match.objects.filter(
+                    assigned_referees__referee=referee,
+                    status__in=['scheduled', 'live']
+                ).select_related('home_team', 'away_team', 'tournament').order_by('kickoff_at')
+                
+                from .serializers import MatchSerializer
+                return Response({
+                    'referee_id': referee.id,
+                    'name': referee.name,
+                    'username': referee.username,
+                    'assigned_matches': MatchSerializer(matches, many=True).data
+                })
+            else:
+                return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        except Referee.DoesNotExist:
+            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+
     @action(detail=False, methods=['get'], url_path='by-slug/(?P<slug>[^/.]+)', permission_classes=[AllowAny])
     def by_slug(self, request, slug=None):
         """NEW: Get tournament by slug (public endpoint)"""
@@ -588,7 +645,118 @@ class MatchViewSet(viewsets.ModelViewSet):
         
         return qs
 
-    @action(detail=True, methods=['post'], url_path='score', permission_classes=[IsTeamManagerOrHost])
+    @action(detail=True, methods=['post'], url_path='start', permission_classes=[IsMatchRefereeOrOrganizer])
+    def start_match(self, request, pk=None):
+        """Start match - set status to live and record start time"""
+        from django.utils import timezone
+        
+        match = self.get_object()
+        
+        # Check if match is already started or finished
+        if match.status == 'live':
+            return Response(
+                {'detail': 'Match is already live'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if match.status == 'finished':
+            return Response(
+                {'detail': 'Match is already finished'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check permissions: organizer or assigned referee
+        tournament = match.tournament
+        is_organizer = tournament.organizer_id == request.user.id if request.user.is_authenticated else False
+        
+        # Check if referee_id is provided (for referee login)
+        referee_id = request.data.get('referee_id')
+        is_referee = False
+        if referee_id:
+            try:
+                from .models import Referee
+                referee = Referee.objects.get(id=referee_id, is_active=True)
+                is_referee = MatchReferee.objects.filter(match=match, referee=referee, is_primary=True).exists()
+            except:
+                pass
+        
+        if not (is_organizer or is_referee):
+            return Response(
+                {'detail': 'Only organizer or assigned referee can start a match'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Start the match
+        match.status = 'live'
+        match.started_at = timezone.now()
+        # Get duration from tournament rules
+        duration = tournament.rules.get('duration_mins', 20) if tournament.rules else 20
+        match.duration_minutes = duration
+        match.save()
+        
+        return Response({
+            'detail': 'Match started',
+            'started_at': match.started_at,
+            'duration_minutes': match.duration_minutes,
+            'status': match.status
+        })
+
+    @action(detail=True, methods=['post'], url_path='end', permission_classes=[IsMatchRefereeOrOrganizer])
+    def end_match(self, request, pk=None):
+        """End match - set status to finished"""
+        from .simulation_helpers import generate_next_knockout_round
+        
+        match = self.get_object()
+        
+        # Check if match is already finished
+        if match.status == 'finished':
+            return Response(
+                {'detail': 'Match is already finished'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check permissions: organizer or assigned referee
+        tournament = match.tournament
+        is_organizer = tournament.organizer_id == request.user.id if request.user.is_authenticated else False
+        
+        # Check if referee_id is provided (for referee login)
+        referee_id = request.data.get('referee_id')
+        is_referee = False
+        if referee_id:
+            try:
+                from .models import Referee
+                referee = Referee.objects.get(id=referee_id, is_active=True)
+                is_referee = MatchReferee.objects.filter(match=match, referee=referee, is_primary=True).exists()
+            except:
+                pass
+        
+        if not (is_organizer or is_referee):
+            return Response(
+                {'detail': 'Only organizer or assigned referee can end a match'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # End the match
+        match.status = 'finished'
+        match.save()
+        
+        # Auto-generate next knockout round if applicable
+        if tournament.format == 'knockout' and match.pitch:
+            # Extract round number from pitch
+            import re
+            round_match = re.search(r'Round\s+(\d+)', match.pitch, re.IGNORECASE)
+            if round_match:
+                completed_round = int(round_match.group(1))
+                try:
+                    generate_next_knockout_round(tournament, completed_round)
+                except:
+                    pass  # Don't fail if next round generation fails
+        
+        return Response({
+            'detail': 'Match ended',
+            'status': match.status
+        })
+
+    @action(detail=True, methods=['post'], url_path='score', permission_classes=[IsMatchRefereeOrOrganizer])
     def set_score(self, request, pk=None):
         from django.db import transaction
         # MatchScorer and MatchAssist already imported at top of file

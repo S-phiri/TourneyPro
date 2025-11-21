@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
-import { api, getTournamentStandings, getTournamentTopScorers, getTournamentTopAssists, generateFixtures, seedTestTeams, simulateRound } from '../lib/api';
+import { api, getTournamentStandings, getTournamentTopScorers, getTournamentTopAssists, generateFixtures, seedTestTeams, simulateRound, clearFixtures } from '../lib/api';
 import { Tournament } from '../types/tournament';
 import { Match } from '../lib/matches';
 import { Registration } from '../lib/registrations';
@@ -228,6 +228,7 @@ const TournamentDetail: React.FC = () => {
   // Transform data for components
   const completedMatches = arr(matches).filter(match => match?.status === 'finished');
   const upcomingMatches = arr(matches).filter(match => match?.status === 'scheduled');
+  const liveMatches = arr(matches).filter(match => match?.status === 'live');
 
   const teams = arr(registrations).map(reg => ({
     id: toStr(reg?.team?.id),
@@ -251,6 +252,28 @@ const TournamentDetail: React.FC = () => {
       initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
     },
     status: 'upcoming' as const
+  }));
+
+  const liveMatchesData = arr(liveMatches).map(match => ({
+    id: toStr(match?.id),
+    time: match?.started_at ? new Date(match.started_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'LIVE',
+    pitch: toStr(match?.pitch) || 'TBA',
+    homeTeam: {
+      id: toStr(match?.home_team?.id),
+      name: toStr(match?.home_team?.name),
+      initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
+    },
+    awayTeam: {
+      id: toStr(match?.away_team?.id),
+      name: toStr(match?.away_team?.name),
+      initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
+    },
+    homeScore: match?.home_score ?? 0,
+    awayScore: match?.away_score ?? 0,
+    status: 'live' as const,
+    startedAt: match?.started_at,
+    durationMinutes: match?.duration_minutes,
+    scorers: match?.scorers || []
   }));
 
   const results = arr(completedMatches).map(match => ({
@@ -414,6 +437,22 @@ const TournamentDetail: React.FC = () => {
                 )}
               </div>
 
+              {/* Tournament Format Display */}
+              <div className="mb-4">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg">
+                  <span className="text-gray-400 text-sm">Format:</span>
+                  <span className="text-white font-semibold capitalize">
+                    {tournament.format === 'knockout' ? 'Knockout' : 
+                     tournament.format === 'combination' ? 'Combination' : 
+                     tournament.format === 'league' ? 'League (Round-Robin)' : 
+                     tournament.format || 'Not Set'}
+                  </span>
+                  {tournament.format === 'league' && (
+                    <span className="text-xs text-yellow-400">⚠️ All teams play each other</span>
+                  )}
+                </div>
+              </div>
+
               {/* Organiser Actions */}
               {tournamentRole.is_organiser && (
                 <div className="flex flex-wrap gap-3">
@@ -440,6 +479,8 @@ const TournamentDetail: React.FC = () => {
                           }
                           message += `\nManager passwords: test1234`;
                           alert(message);
+                          // Force refresh by waiting a bit then fetching
+                          await new Promise(resolve => setTimeout(resolve, 500));
                           fetchTournament();
                         } catch (err: any) {
                           alert(err.message || 'Failed to seed test teams');
@@ -476,12 +517,36 @@ const TournamentDetail: React.FC = () => {
                   {arr(registrations).length >= (Number(tournament.team_max) || 0) && upcomingMatches.length === 0 && (
                     <button
                       onClick={async () => {
+                        // Show format confirmation
+                        const format = tournament.format || 'league';
+                        const formatName = format === 'knockout' ? 'Knockout' : format === 'combination' ? 'Combination' : 'League';
+                        const numTeams = arr(registrations).length;
+                        
+                        let expectedMatches = '';
+                        if (format === 'knockout') {
+                          const firstRound = numTeams % 2 === 0 ? numTeams / 2 : (numTeams - 1) / 2;
+                          expectedMatches = `First round: ${firstRound} matches`;
+                        } else if (format === 'league') {
+                          const total = (numTeams * (numTeams - 1)) / 2;
+                          expectedMatches = `Total: ${total} matches (everyone plays everyone)`;
+                        }
+                        
+                        const confirmMsg = `Generate fixtures for ${formatName} tournament?\n\n` +
+                          `Teams: ${numTeams}\n` +
+                          `${expectedMatches}\n\n` +
+                          (format === 'league' ? '⚠️ This will create a round-robin where every team plays every other team.\n' : '') +
+                          `Continue?`;
+                        
+                        if (!window.confirm(confirmMsg)) {
+                          return;
+                        }
+                        
                         try {
                           await generateFixtures(parseInt(id!));
-                          alert('Fixtures generation triggered!');
+                          alert('✓ Fixtures generated successfully!');
                           fetchTournament();
-                        } catch (err) {
-                          alert('Failed to generate fixtures');
+                        } catch (err: any) {
+                          alert(`Failed to generate fixtures: ${err.message || 'Unknown error'}`);
                         }
                       }}
                       className="px-5 py-2.5 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
@@ -514,6 +579,40 @@ const TournamentDetail: React.FC = () => {
                     className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
                   >
                     Manage Fixtures
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const matchCount = arr(matches).length;
+                      if (matchCount === 0) {
+                        alert('No fixtures to clear.');
+                        return;
+                      }
+                      
+                      const confirmMsg = `Delete all ${matchCount} fixtures/matches for this tournament?\n\n` +
+                        `This will delete:\n` +
+                        `- All scheduled matches\n` +
+                        `- All completed matches\n` +
+                        `- All match scores and stats\n` +
+                        `- All scorer and assist records\n\n` +
+                        `This action cannot be undone. Continue?`;
+                      
+                      if (!window.confirm(confirmMsg)) {
+                        return;
+                      }
+                      
+                      try {
+                        const result = await clearFixtures(parseInt(id!));
+                        alert(`✓ ${result.detail || `Successfully deleted ${result.matches_deleted || matchCount} fixtures`}`);
+                        fetchTournament(); // Refresh tournament data
+                      } catch (err: any) {
+                        alert(`Failed to clear fixtures: ${err.message || 'Unknown error'}`);
+                      }
+                    }}
+                    disabled={arr(matches).length === 0}
+                    className="px-5 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-red-500/20 hover:-translate-y-0.5"
+                    title={arr(matches).length === 0 ? 'No fixtures to clear' : 'Delete all matches/fixtures'}
+                  >
+                    Clear Fixtures ({arr(matches).length || 0})
                   </button>
                 </div>
               )}

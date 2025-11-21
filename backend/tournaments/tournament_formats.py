@@ -174,11 +174,15 @@ def generate_league_fixtures(teams: List[Team], tournament: Tournament, start_da
     return matches
 
 
+def is_power_of_2(n):
+    """Check if a number is a power of 2"""
+    return n > 0 and (n & (n - 1)) == 0
+
 def generate_knockout_fixtures(teams: List[Team], tournament: Tournament, start_date: datetime) -> List[Match]:
     """
     Generate single-elimination knockout fixtures (bracket style)
     For knockout: generates first round only (subsequent rounds generated after each round completes)
-    - Round 1: n/2 matches (n teams)
+    - Round 1: n/2 matches (n teams) for power-of-2 numbers
     - Total matches for full tournament = n - 1 (for n teams)
     - But we only generate Round 1 here, subsequent rounds are created dynamically
     
@@ -190,8 +194,21 @@ def generate_knockout_fixtures(teams: List[Team], tournament: Tournament, start_
     if num_teams < 2:
         return matches
     
+    # Validate: knockout brackets must be power-of-2
+    if not is_power_of_2(num_teams):
+        valid_sizes = [4, 8, 16, 32, 64]
+        raise ValueError(
+            f'Knockout tournament must have a power-of-2 number of teams. '
+            f'Got {num_teams} teams. Valid sizes: {valid_sizes}. '
+            f'Please adjust team count or use a different format.'
+        )
+    
+    # Validate: ensure we're not accidentally generating league fixtures
+    # For knockout, max matches in first round should be num_teams // 2
+    max_first_round_matches = num_teams // 2
+    
     # For knockout, only generate the first round
-    # Each match eliminates one team, so Round 1 has num_teams // 2 matches
+    # Since we only allow power-of-2, all teams play (no byes needed)
     num_matches_round1 = num_teams // 2
     
     # Pair teams for first round
@@ -208,6 +225,13 @@ def generate_knockout_fixtures(teams: List[Team], tournament: Tournament, start_
             pitch="Round 1"  # Use pitch field to track round
         )
         matches.append(match)
+    
+    # Validation: ensure we didn't generate too many matches
+    if len(matches) > max_first_round_matches:
+        raise ValueError(
+            f"Knockout fixture generation error: Generated {len(matches)} matches for {num_teams} teams. "
+            f"Expected maximum {max_first_round_matches} matches in first round."
+        )
     
     # Note: Subsequent rounds should be generated after Round 1 completes
     # This ensures we know which teams actually advanced
@@ -302,6 +326,25 @@ def generate_combination_fixtures(
     return matches
 
 
+def assign_referees_to_matches(matches: List[Match], tournament: Tournament):
+    """Auto-assign referees to matches when fixtures are generated"""
+    from .models import Referee, MatchReferee
+    
+    # Get active referees (can filter by tournament/venue if needed)
+    referees = list(Referee.objects.filter(is_active=True))
+    
+    if not referees:
+        return  # No referees available
+    
+    # Round-robin assignment: distribute matches evenly among referees
+    for i, match in enumerate(matches):
+        referee = referees[i % len(referees)]
+        MatchReferee.objects.create(
+            match=match,
+            referee=referee,
+            is_primary=True
+        )
+
 def generate_fixtures_for_tournament(tournament: Tournament) -> List[Match]:
     """
     Main entry point: Generate fixtures based on tournament format
@@ -314,8 +357,9 @@ def generate_fixtures_for_tournament(tournament: Tournament) -> List[Match]:
     ).select_related('team')
     
     teams = [reg.team for reg in registrations]
+    num_teams = len(teams)
     
-    if len(teams) < 2:
+    if num_teams < 2:
         return []  # Need at least 2 teams
     
     # Determine start date
@@ -329,14 +373,45 @@ def generate_fixtures_for_tournament(tournament: Tournament) -> List[Match]:
     
     # Generate fixtures based on format
     if tournament.format == "league":
-        return generate_league_fixtures(teams, tournament, start_date)
+        matches = generate_league_fixtures(teams, tournament, start_date)
+        # Validation: For league with n teams, should have n*(n-1)/2 total matches
+        expected_matches = num_teams * (num_teams - 1) // 2
+        if len(matches) != expected_matches:
+            raise ValueError(
+                f"League fixture generation error: Generated {len(matches)} matches for {num_teams} teams. "
+                f"Expected {expected_matches} matches (n*(n-1)/2)."
+            )
+        # Auto-assign referees to matches
+        assign_referees_to_matches(matches, tournament)
+        return matches
     elif tournament.format == "knockout":
-        return generate_knockout_fixtures(teams, tournament, start_date)
+        matches = generate_knockout_fixtures(teams, tournament, start_date)
+        # Validation: For knockout with n teams, first round should have n/2 matches (or (n-1)/2 for odd)
+        expected_first_round = num_teams // 2 if num_teams % 2 == 0 else (num_teams - 1) // 2
+        if len(matches) != expected_first_round:
+            raise ValueError(
+                f"Knockout fixture generation error: Generated {len(matches)} matches for {num_teams} teams. "
+                f"Expected {expected_first_round} matches in first round. "
+                f"Tournament format is '{tournament.format}'. "
+                f"Number of registered teams: {num_teams}."
+            )
+        # Auto-assign referees to matches
+        assign_referees_to_matches(matches, tournament)
+        return matches
     elif tournament.format == "combination":
-        return generate_combination_fixtures(teams, tournament, start_date, combination_type)
+        matches = generate_combination_fixtures(teams, tournament, start_date, combination_type)
+        # Auto-assign referees to matches
+        assign_referees_to_matches(matches, tournament)
+        return matches
     else:
-        # Default to league
-        return generate_league_fixtures(teams, tournament, start_date)
+        # Default to league (but log warning)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Unknown tournament format '{tournament.format}', defaulting to league")
+        matches = generate_league_fixtures(teams, tournament, start_date)
+        # Auto-assign referees to matches
+        assign_referees_to_matches(matches, tournament)
+        return matches
 
 
 def calculate_group_standings(teams: List[Team], matches: List[Match], group_name: str) -> List[Dict]:

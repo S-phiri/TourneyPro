@@ -3,13 +3,14 @@ Helper functions for seeding test data
 Can be used by management commands and API endpoints
 """
 from django.contrib.auth.models import User
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 from datetime import datetime, timedelta
 from tournaments.models import Tournament, Team, Registration, Player, TeamPlayer, Match
 from tournaments.tournament_formats import generate_fixtures_for_tournament
 from accounts.models import UserProfile
 import random
+import time
 
 
 def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0, simulate_games=False):
@@ -90,170 +91,177 @@ def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0
                     'manager': team.manager_user if hasattr(team, 'manager_user') else None
                 })
     
-    with transaction.atomic():
-        # Process new teams
-        for i in range(teams_to_create):
-            # Generate unique team name
-            team_name_template = team_names[i % len(team_names)]
-            team_name = f"{team_name_template} {i+1}" if i >= len(team_names) else team_name_template
-            
-            # Ensure unique team name
-            base_name = team_name
-            counter = 1
-            while Team.objects.filter(name=team_name).exists():
-                team_name = f"{base_name} {counter}"
-                counter += 1
+    # Ensure connection is ready before starting transaction
+    connection.ensure_connection()
+    
+    # Add retry logic for database operations to handle SQLite locking
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with transaction.atomic():
+                # Process new teams
+                for i in range(teams_to_create):
+                    # Generate unique team name
+                    team_name_template = team_names[i % len(team_names)]
+                    team_name = f"{team_name_template} {i+1}" if i >= len(team_names) else team_name_template
+                    
+                    # Ensure unique team name
+                    base_name = team_name
+                    counter = 1
+                    while Team.objects.filter(name=team_name).exists():
+                        team_name = f"{base_name} {counter}"
+                        counter += 1
 
-            # Generate manager details
-            manager_first = random.choice(first_names)
-            manager_last = random.choice(last_names)
-            manager_name = f"{manager_first} {manager_last}"
-            
-            # Generate unique email
-            base_email = f"{manager_first.lower()}.{manager_last.lower()}"
-            manager_email = f"{base_email}@test.com"
-            counter = 1
-            while User.objects.filter(email=manager_email).exists():
-                manager_email = f"{base_email}{counter}@test.com"
-                counter += 1
+                    # Generate manager details
+                    manager_first = random.choice(first_names)
+                    manager_last = random.choice(last_names)
+                    manager_name = f"{manager_first} {manager_last}"
+                    
+                    # Generate unique email
+                    base_email = f"{manager_first.lower()}.{manager_last.lower()}"
+                    manager_email = f"{base_email}@test.com"
+                    counter = 1
+                    while User.objects.filter(email=manager_email).exists():
+                        manager_email = f"{base_email}{counter}@test.com"
+                        counter += 1
 
-            # Create or get manager user
-            username = manager_email.split('@')[0]
-            base_username = username
-            counter = 1
-            while User.objects.filter(username=username).exists():
-                username = f"{base_username}{counter}"
-                counter += 1
+                    # Create or get manager user
+                    username = manager_email.split('@')[0]
+                    base_username = username
+                    counter = 1
+                    while User.objects.filter(username=username).exists():
+                        username = f"{base_username}{counter}"
+                        counter += 1
 
-            manager_user, user_created = User.objects.get_or_create(
-                email=manager_email,
-                defaults={
-                    'username': username,
-                    'first_name': manager_first,
-                    'last_name': manager_last,
-                    'is_active': True,
-                }
-            )
-            
-            # Set password (default: 'test1234')
-            if user_created:
-                manager_user.set_password('test1234')
-                manager_user.save()
+                    manager_user, user_created = User.objects.get_or_create(
+                        email=manager_email,
+                        defaults={
+                            'username': username,
+                            'first_name': manager_first,
+                            'last_name': manager_last,
+                            'is_active': True,
+                        }
+                    )
+                    
+                    # Set password (default: 'test1234')
+                    if user_created:
+                        manager_user.set_password('test1234')
+                        manager_user.save()
+                        
+                        # Create profile with manager role
+                        profile, _ = UserProfile.objects.get_or_create(user=manager_user)
+                        profile.role_hint = 'manager'
+                        profile.save()
+                        
+                        managers_created += 1
+
+                    # Create team
+                    team, team_created = Team.objects.get_or_create(
+                        name=team_name,
+                        manager_email=manager_email,
+                        defaults={
+                            'manager_name': manager_name,
+                            'manager_user': manager_user,
+                            'phone': f'082{random.randint(1000000, 9999999)}'
+                        }
+                    )
+
+                    if team_created:
+                        # Update manager_user if not set
+                        if not team.manager_user:
+                            team.manager_user = manager_user
+                            team.save()
+
+                    # Create registration
+                    registration, reg_created = Registration.objects.get_or_create(
+                        tournament=tournament,
+                        team=team,
+                        defaults={
+                            'status': 'paid' if mark_paid else 'pending',
+                            'paid_amount': tournament.entry_fee if mark_paid else 0
+                        }
+                    )
+
+                    if not reg_created:
+                        # Update existing registration if needed
+                        if mark_paid and registration.status != 'paid':
+                            registration.status = 'paid'
+                            registration.paid_amount = tournament.entry_fee
+                            registration.save()
+
+                    created_teams.append({
+                        'team': team,
+                        'manager': manager_user,
+                        'registration': registration
+                    })
+
+                    # Always create players for each team
+                    player_first_names = ['Alex', 'Jordan', 'Taylor', 'Morgan', 'Casey', 
+                                         'Riley', 'Avery', 'Quinn', 'Blake', 'Drew', 'Sam', 'Jake',
+                                         'Max', 'Ben', 'Luke', 'Ryan', 'Kyle', 'Nick', 'Zach', 'Noah']
+                    player_last_names = ['Anderson', 'Thomas', 'Jackson', 'White', 'Harris',
+                                       'Martin', 'Thompson', 'Moore', 'Young', 'Lee', 'Wilson', 'Davis',
+                                       'Miller', 'Brown', 'Jones', 'Garcia', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez']
+                    
+                    # Position distribution: 1 GK, 3-4 DF, 3-4 MF, 2-4 FW
+                    team_positions = ['GK']  # Always one goalkeeper
+                    num_defenders = random.randint(3, 4)
+                    num_midfielders = random.randint(3, 4)
+                    num_forwards = random.randint(2, 4)
+                    
+                    for _ in range(num_defenders):
+                        team_positions.append('DF')
+                    for _ in range(num_midfielders):
+                        team_positions.append('MF')
+                    for _ in range(num_forwards):
+                        team_positions.append('FW')
+                    
+                    # Shuffle positions and assign to players
+                    random.shuffle(team_positions)
+                    # Ensure we have enough players
+                    while len(team_positions) < players_per_team:
+                        team_positions.append(random.choice(['DF', 'MF', 'FW']))
+
+                    team_players = []
+                    for j in range(players_per_team):
+                        player_first = random.choice(player_first_names)
+                        player_last = random.choice(player_last_names)
+                        player_name = f"{player_first} {player_last}"
+                        
+                        # Generate unique email for player
+                        player_email_base = f"{player_first.lower()}.{player_last.lower()}"
+                        player_email = f"{player_email_base}@{team_name.lower().replace(' ', '').replace('fc', '').replace('united', '').replace('fc', '')}.com"
+                        counter = 1
+                        while Player.objects.filter(email=player_email).exists():
+                            player_email = f"{player_email_base}{counter}@{team_name.lower().replace(' ', '').replace('fc', '').replace('united', '').replace('fc', '')}.com"
+                            counter += 1
+                        
+                        player, _ = Player.objects.get_or_create(
+                            first_name=player_first,
+                            last_name=player_last,
+                            email=player_email,
+                            defaults={
+                                'position': team_positions[j] if j < len(team_positions) else random.choice(['DF', 'MF', 'FW']),
+                                'phone': ''
+                            }
+                        )
+
+                        TeamPlayer.objects.get_or_create(
+                            team=team,
+                            player=player,
+                            defaults={
+                                'number': j + 1,
+                                'is_captain': j == 0
+                            }
+                        )
+                        team_players.append(player)
+                        players_created += 1
+                    
+                    # Store team players for later use in simulation
+                    created_teams[-1]['players'] = team_players
                 
-                # Create profile with manager role
-                profile, _ = UserProfile.objects.get_or_create(user=manager_user)
-                profile.role_hint = 'manager'
-                profile.save()
-                
-                managers_created += 1
-
-            # Create team
-            team, team_created = Team.objects.get_or_create(
-                name=team_name,
-                manager_email=manager_email,
-                defaults={
-                    'manager_name': manager_name,
-                    'manager_user': manager_user,
-                    'phone': f'082{random.randint(1000000, 9999999)}'
-                }
-            )
-
-            if team_created:
-                # Update manager_user if not set
-                if not team.manager_user:
-                    team.manager_user = manager_user
-                    team.save()
-
-            # Create registration
-            registration, reg_created = Registration.objects.get_or_create(
-                tournament=tournament,
-                team=team,
-                defaults={
-                    'status': 'paid' if mark_paid else 'pending',
-                    'paid_amount': tournament.entry_fee if mark_paid else 0
-                }
-            )
-
-            if not reg_created:
-                # Update existing registration if needed
-                if mark_paid and registration.status != 'paid':
-                    registration.status = 'paid'
-                    registration.paid_amount = tournament.entry_fee
-                    registration.save()
-
-            created_teams.append({
-                'team': team,
-                'manager': manager_user,
-                'registration': registration
-            })
-
-            # Always create players for each team
-            player_first_names = ['Alex', 'Jordan', 'Taylor', 'Morgan', 'Casey', 
-                                 'Riley', 'Avery', 'Quinn', 'Blake', 'Drew', 'Sam', 'Jake',
-                                 'Max', 'Ben', 'Luke', 'Ryan', 'Kyle', 'Nick', 'Zach', 'Noah']
-            player_last_names = ['Anderson', 'Thomas', 'Jackson', 'White', 'Harris',
-                               'Martin', 'Thompson', 'Moore', 'Young', 'Lee', 'Wilson', 'Davis',
-                               'Miller', 'Brown', 'Jones', 'Garcia', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez']
-            
-            # Position distribution: 1 GK, 3-4 DF, 3-4 MF, 2-4 FW
-            team_positions = ['GK']  # Always one goalkeeper
-            num_defenders = random.randint(3, 4)
-            num_midfielders = random.randint(3, 4)
-            num_forwards = random.randint(2, 4)
-            
-            for _ in range(num_defenders):
-                team_positions.append('DF')
-            for _ in range(num_midfielders):
-                team_positions.append('MF')
-            for _ in range(num_forwards):
-                team_positions.append('FW')
-            
-            # Shuffle positions and assign to players
-            random.shuffle(team_positions)
-            # Ensure we have enough players
-            while len(team_positions) < players_per_team:
-                team_positions.append(random.choice(['DF', 'MF', 'FW']))
-
-            team_players = []
-            for j in range(players_per_team):
-                player_first = random.choice(player_first_names)
-                player_last = random.choice(player_last_names)
-                player_name = f"{player_first} {player_last}"
-                
-                # Generate unique email for player
-                player_email_base = f"{player_first.lower()}.{player_last.lower()}"
-                player_email = f"{player_email_base}@{team_name.lower().replace(' ', '').replace('fc', '').replace('united', '').replace('fc', '')}.com"
-                counter = 1
-                while Player.objects.filter(email=player_email).exists():
-                    player_email = f"{player_email_base}{counter}@{team_name.lower().replace(' ', '').replace('fc', '').replace('united', '').replace('fc', '')}.com"
-                    counter += 1
-                
-                player, _ = Player.objects.get_or_create(
-                    first_name=player_first,
-                    last_name=player_last,
-                    email=player_email,
-                    defaults={
-                        'position': team_positions[j] if j < len(team_positions) else random.choice(['DF', 'MF', 'FW']),
-                        'phone': ''
-                    }
-                )
-
-                TeamPlayer.objects.get_or_create(
-                    team=team,
-                    player=player,
-                    defaults={
-                        'number': j + 1,
-                        'is_captain': j == 0
-                    }
-                )
-                team_players.append(player)
-                players_created += 1
-            
-            # Store team players for later use in simulation
-            created_teams[-1]['players'] = team_players
-        
-        # Process existing teams to add players
-        for team_data in teams_to_process:
+                # Process existing teams to add players
+                for team_data in teams_to_process:
             team = team_data['team']
             
             # Always create players for each team
@@ -317,12 +325,25 @@ def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0
                 team_players.append(player)
                 players_created += 1
             
-            created_teams.append({
-                'team': team,
-                'manager': team_data['manager'],
-                'registration': team_data['registration']
-            })
-
+                    created_teams.append({
+                        'team': team,
+                        'manager': team_data['manager'],
+                        'registration': team_data['registration']
+                    })
+                
+                # Break out of retry loop on success
+                break
+        except Exception as e:
+            error_str = str(e).lower()
+            if "database is locked" in error_str and attempt < max_retries - 1:
+                # Wait before retry with exponential backoff
+                time.sleep(0.5 * (attempt + 1))
+                connection.ensure_connection()  # Reconnect
+                continue
+            else:
+                # Re-raise if not a locking error or max retries reached
+                raise
+    
     # Collect credentials (only for newly created managers)
     credentials = []
     for item in created_teams:

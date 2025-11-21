@@ -1,5 +1,6 @@
 # tournaments/permissions.py
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from .models import MatchReferee
 
 class IsOrganizerOrReadOnly(BasePermission):
     def has_object_permission(self, request, view, obj):
@@ -60,4 +61,24 @@ class IsTeamManagerOrReadOnly(BasePermission):
         # Allow all operations if user is manager
         # Payment check will be handled when "Pay Now" is clicked
         # Managers can add/edit players and edit team before payment
+        return True
+
+class IsMatchRefereeOrOrganizer(BasePermission):
+    """Permission for match operations - referees (when live) and organizers (always) can update"""
+    def has_object_permission(self, request, view, obj):
+        # obj is a Match
+        if request.method in SAFE_METHODS:
+            return True
+        if not request.user.is_authenticated:
+            return False
+        
+        # Check if user is organizer
+        tournament = getattr(obj, 'tournament', None)
+        if tournament and getattr(tournament, 'organizer_id', None) == request.user.id:
+            return True  # Organizer can always update
+        
+        # Check if user is assigned referee for this match
+        # For referee login, we'll need to check via referee_id from request
+        # This will be handled in the view by checking referee_id from request.data
+        # For now, allow if user is authenticated (referee check happens in view)
         return True
