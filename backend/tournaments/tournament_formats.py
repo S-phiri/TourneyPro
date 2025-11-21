@@ -283,45 +283,88 @@ def generate_combination_fixtures(
         matches.extend(knockout_matches)
         
     elif combination_type == "combinationB":
-        # Groups stage: create groups and generate league fixtures per group
+        # Champions League format: Groups → Knockout
+        # Group stage: teams divided into groups, play round-robin (home & away)
+        # Only generate GROUP STAGE matches here (not knockout - those are created after group stage)
         groups = generate_groups(teams, "combinationB")
-        group_matches = []
         
-        for group in groups:
-            group_teams = group["teams"]
-            group_name = group["name"]
+        # Champions League format: Each team plays 6 matches in 6 rounds (for 4-team groups)
+        # Round 1-6: Each round has one match per team
+        # For 4 teams in a group: Round 1 = 2 matches, Round 2 = 2 matches, etc.
+        group_size = len(groups[0]["teams"]) if groups else 4
+        num_rounds = (group_size - 1) * 2  # Home and away for each pairing
+        
+        # Generate matches round by round (like Champions League)
+        for round_num in range(1, num_rounds + 1):
+            round_date = start_date + timedelta(days=round_num - 1)
             
-            # Generate round-robin within group
-            for i in range(len(group_teams)):
-                for j in range(i + 1, len(group_teams)):
-                    home_team = group_teams[i]
-                    away_team = group_teams[j]
-                    
-                    match = Match(
-                        tournament=tournament,
-                        home_team=home_team,
-                        away_team=away_team,
-                        kickoff_at=current_date,
-                        status='scheduled',
-                        pitch=group_name  # Use pitch to track group
-                    )
-                    group_matches.append(match)
-                    matches.append(match)
-            
-            # Space out groups (each group's matches on different days/time slots)
-            current_date += timedelta(days=1)
+            # Generate matches for all groups in this round
+            for group in groups:
+                group_teams = group["teams"]
+                group_name = group["name"]
+                
+                # Rotate teams to ensure each round has different pairings
+                # This is a simplified rotation - for true Champions League, use specific pairings
+                if round_num == 1:
+                    # Round 1: Team 1 vs Team 2, Team 3 vs Team 4
+                    pairings = [
+                        (group_teams[0], group_teams[1]),
+                        (group_teams[2], group_teams[3]) if len(group_teams) >= 4 else None
+                    ]
+                elif round_num == 2:
+                    # Round 2: Team 1 vs Team 3, Team 2 vs Team 4
+                    pairings = [
+                        (group_teams[0], group_teams[2]),
+                        (group_teams[1], group_teams[3]) if len(group_teams) >= 4 else None
+                    ]
+                elif round_num == 3:
+                    # Round 3: Team 1 vs Team 4, Team 2 vs Team 3
+                    pairings = [
+                        (group_teams[0], group_teams[3]) if len(group_teams) >= 4 else None,
+                        (group_teams[1], group_teams[2])
+                    ]
+                elif round_num == 4:
+                    # Round 4: Reverse of Round 1 (away/home)
+                    pairings = [
+                        (group_teams[1], group_teams[0]),
+                        (group_teams[3], group_teams[2]) if len(group_teams) >= 4 else None
+                    ]
+                elif round_num == 5:
+                    # Round 5: Reverse of Round 2
+                    pairings = [
+                        (group_teams[2], group_teams[0]),
+                        (group_teams[3], group_teams[1]) if len(group_teams) >= 4 else None
+                    ]
+                elif round_num == 6:
+                    # Round 6: Reverse of Round 3
+                    pairings = [
+                        (group_teams[3], group_teams[0]) if len(group_teams) >= 4 else None,
+                        (group_teams[2], group_teams[1])
+                    ]
+                else:
+                    # For groups with more/less teams, use rotation
+                    pairings = []
+                    for i in range(0, len(group_teams) - 1, 2):
+                        if i + 1 < len(group_teams):
+                            pairings.append((group_teams[i], group_teams[i + 1]))
+                
+                # Create matches for this round in this group
+                for pairing in pairings:
+                    if pairing and pairing[0] and pairing[1]:
+                        home_team, away_team = pairing
+                        match = Match(
+                            tournament=tournament,
+                            home_team=home_team,
+                            away_team=away_team,
+                            kickoff_at=round_date,
+                            status='scheduled',
+                            pitch=f"{group_name} - Round {round_num}"  # Track group and round
+                        )
+                        matches.append(match)
         
-        # Knockout stage: top 2 from each group advance
-        # Calculate days needed for groups
-        max_group_size = max(len(g["teams"]) for g in groups) if groups else 0
-        group_stage_days = max_group_size  # Rough estimate
-        current_date += timedelta(days=group_stage_days + 1)  # +1 day gap
-        
-        # Top 2 from each group = 2 * num_groups teams
-        num_qualifiers = len(groups) * 2 if groups else 0
-        knockout_teams = teams[:num_qualifiers]  # Placeholder - actual qualifiers determined after group stage
-        knockout_matches = generate_knockout_fixtures(knockout_teams, tournament, current_date)
-        matches.extend(knockout_matches)
+        # NOTE: Knockout matches are NOT generated here
+        # They will be generated dynamically after group stage completes
+        # This happens in simulation_helpers.py when group stage finishes
     
     return matches
 

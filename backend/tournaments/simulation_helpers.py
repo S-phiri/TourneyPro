@@ -123,8 +123,31 @@ def simulate_round(tournament):
     
     stage_name = "League Stage" if is_league_stage else "Knockout Stage"
     
-    # After simulating a knockout round, generate next round if applicable
+    # After simulating a round, check if we need to generate next stage
     next_round_created = False
+    knockout_stage_started = False
+    
+    # Check if group stage is complete (for combinationB tournaments)
+    if tournament.format == 'combination':
+        structure = tournament.structure or {}
+        combination_type = structure.get('combination_type', 'combinationA')
+        
+        if combination_type == 'combinationB' and is_league_stage:
+            # Check if all group stage matches are complete
+            group_matches = Match.objects.filter(
+                tournament=tournament,
+                pitch__icontains='Group'
+            )
+            unfinished_groups = group_matches.filter(status__in=['scheduled', 'live'])
+            
+            if not unfinished_groups.exists() and group_matches.exists():
+                # All group stage matches complete - generate knockout stage
+                try:
+                    knockout_stage_started = generate_knockout_stage_from_groups(tournament)
+                except Exception as e:
+                    print(f"Error generating knockout stage: {str(e)}")
+    
+    # After simulating a knockout round, generate next round if applicable
     if not is_league_stage and tournament.format == 'knockout' and matches_simulated > 0:
         try:
             next_round_created = generate_next_knockout_round(tournament, round_number)
@@ -233,6 +256,109 @@ def generate_next_knockout_round(tournament, completed_round_number):
     return matches_created > 0
 
 
+def generate_knockout_stage_from_groups(tournament):
+    """
+    Generate knockout stage matches for combinationB tournaments after group stage completes.
+    Top 2 teams from each group advance to knockout stage.
+    
+    Returns:
+        bool: True if knockout stage was created, False otherwise
+    """
+    from .models import Match
+    from .tournament_formats import generate_groups, calculate_group_standings, generate_knockout_fixtures
+    from datetime import timedelta
+    
+    # Check if knockout stage already exists
+    knockout_matches = Match.objects.filter(
+        tournament=tournament
+    ).exclude(pitch__icontains='Group')
+    
+    if knockout_matches.exists():
+        # Knockout stage already generated
+        return False
+    
+    # Get all registrations
+    registrations = tournament.registrations.filter(status__in=['pending', 'paid']).select_related('team')
+    teams = [reg.team for reg in registrations]
+    
+    if len(teams) < 4:
+        return False  # Need at least 4 teams
+    
+    # Recreate groups (same logic as fixture generation)
+    groups = generate_groups(teams, "combinationB")
+    
+    # Calculate standings for each group and get qualifiers
+    qualifiers = []
+    for group in groups:
+        group_standings = calculate_group_standings(tournament, group["name"])
+        if group_standings and len(group_standings) >= 2:
+            # Top 2 teams qualify
+            from .models import Team
+            if isinstance(group_standings[0]["team"], dict):
+                team1_id = group_standings[0]["team"].get("id")
+                team2_id = group_standings[1]["team"].get("id")
+            else:
+                team1_id = group_standings[0]["team"]
+                team2_id = group_standings[1]["team"]
+            
+            try:
+                team1 = Team.objects.get(id=team1_id) if isinstance(team1_id, int) else team1_id
+                team2 = Team.objects.get(id=team2_id) if isinstance(team2_id, int) else team2_id
+                qualifiers.append(team1)
+                qualifiers.append(team2)
+            except (Team.DoesNotExist, TypeError):
+                # Fallback: try to get teams from standings directly
+                if hasattr(group_standings[0]["team"], 'name'):
+                    qualifiers.append(group_standings[0]["team"])
+                if hasattr(group_standings[1]["team"], 'name'):
+                    qualifiers.append(group_standings[1]["team"])
+    
+    if len(qualifiers) < 2:
+        return False  # Not enough qualifiers
+    
+    # Ensure qualifiers is power of 2 (for knockout bracket)
+    # Take nearest power of 2
+    num_qualifiers = len(qualifiers)
+    if num_qualifiers > 16:
+        bracket_size = 16
+    elif num_qualifiers > 8:
+        bracket_size = 16
+    elif num_qualifiers > 4:
+        bracket_size = 8
+    elif num_qualifiers > 2:
+        bracket_size = 4
+    else:
+        bracket_size = 2
+    
+    # Take top teams to fill bracket
+    qualifiers = qualifiers[:bracket_size]
+    
+    # Get last group stage match date
+    last_group_match = Match.objects.filter(
+        tournament=tournament,
+        pitch__icontains='Group'
+    ).order_by('-kickoff_at').first()
+    
+    if not last_group_match:
+        return False
+    
+    # Start knockout stage 1 day after group stage ends
+    knockout_start_date = last_group_match.kickoff_at + timedelta(days=1)
+    
+    # Generate knockout fixtures (Round of X)
+    knockout_matches = generate_knockout_fixtures(qualifiers, tournament, knockout_start_date)
+    
+    # Save knockout matches
+    matches_created = 0
+    for match in knockout_matches:
+        # Update pitch to indicate knockout round
+        match.pitch = f"Round of {len(qualifiers)}"
+        match.save()
+        matches_created += 1
+    
+    return matches_created > 0
+
+
 def simulate_match(match):
     """
     Simulate a single match with realistic scores, scorers, and assisters
@@ -308,12 +434,34 @@ def simulate_match(match):
         away_scorers.append(scorer)
     
     # Create MatchScorer and MatchAssist entries
+    # Track minutes used to ensure unique (match, player, minute) combinations
+    used_minutes_home = {}  # player_id -> set of minutes used
+    used_minutes_away = {}  # player_id -> set of minutes used
+    
     for scorer in home_scorers:
+        # Ensure unique minute for this player in this match
+        if scorer.id not in used_minutes_home:
+            used_minutes_home[scorer.id] = set()
+        
+        # Find an unused minute for this player (try up to 90 times)
+        minute = None
+        for _ in range(90):
+            candidate_minute = random.randint(1, 90)
+            if candidate_minute not in used_minutes_home[scorer.id]:
+                minute = candidate_minute
+                used_minutes_home[scorer.id].add(minute)
+                break
+        
+        # If all minutes used (unlikely), use None or try to find any unused
+        if minute is None:
+            # Use a sequential minute based on goals already scored
+            minute = len(used_minutes_home[scorer.id]) + 1
+        
         goal = MatchScorer.objects.create(
             match=match,
             player=scorer,
             team=match.home_team,
-            minute=random.randint(1, 90)
+            minute=minute
         )
         
         # 60% chance of assist (not all goals have assists)
@@ -322,19 +470,39 @@ def simulate_match(match):
             possible_assisters = [p for p in home_players if p.id != scorer.id]
             if possible_assisters:
                 assister = random.choice(possible_assisters)
-                MatchAssist.objects.create(
-                    goal=goal,
-                    match=match,
-                    player=assister,
-                    team=match.home_team
-                )
+                try:
+                    MatchAssist.objects.create(
+                        goal=goal,
+                        match=match,
+                        player=assister,
+                        team=match.home_team
+                    )
+                except Exception:
+                    # Skip assist if creation fails (e.g., already exists)
+                    pass
     
     for scorer in away_scorers:
+        # Ensure unique minute for this player in this match
+        if scorer.id not in used_minutes_away:
+            used_minutes_away[scorer.id] = set()
+        
+        # Find an unused minute for this player
+        minute = None
+        for _ in range(90):
+            candidate_minute = random.randint(1, 90)
+            if candidate_minute not in used_minutes_away[scorer.id]:
+                minute = candidate_minute
+                used_minutes_away[scorer.id].add(minute)
+                break
+        
+        if minute is None:
+            minute = len(used_minutes_away[scorer.id]) + 1
+        
         goal = MatchScorer.objects.create(
             match=match,
             player=scorer,
             team=match.away_team,
-            minute=random.randint(1, 90)
+            minute=minute
         )
         
         # 60% chance of assist
@@ -342,12 +510,16 @@ def simulate_match(match):
             possible_assisters = [p for p in away_players if p.id != scorer.id]
             if possible_assisters:
                 assister = random.choice(possible_assisters)
-                MatchAssist.objects.create(
-                    goal=goal,
-                    match=match,
-                    player=assister,
-                    team=match.away_team
-                )
+                try:
+                    MatchAssist.objects.create(
+                        goal=goal,
+                        match=match,
+                        player=assister,
+                        team=match.away_team
+                    )
+                except Exception:
+                    # Skip assist if creation fails
+                    pass
     
     # Update team stats
     match.home_team.goals_for += home_score

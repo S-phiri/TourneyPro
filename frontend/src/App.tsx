@@ -48,6 +48,7 @@ function App() {
                 <Route path="/teams/:id" element={<TeamHub />} />
                 <Route path="/players/:id" element={<PlayerProfile />} />
                 <Route path="/t/:slug" element={<TournamentBySlug />} />
+                <Route path="/t/:slug/fixtures" element={<Fixtures />} />
                 <Route path="/t/:slug/register" element={<RegisterTeam />} />
                 <Route path="/t/:slug/registration/success" element={<RegistrationSuccess />} />
                 <Route path="/registration/success" element={<RegistrationSuccess />} />

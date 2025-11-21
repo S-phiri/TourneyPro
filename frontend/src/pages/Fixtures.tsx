@@ -51,7 +51,9 @@ const ErrorAlert = ({ message, onRetry }: { message: string; onRetry?: () => voi
 );
 
 const Fixtures: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const params = useParams<{ id?: string; slug?: string }>();
+  const id = params.id;
+  const slug = params.slug;
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [matches, setMatches] = useState<Match[]>([]);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
@@ -59,7 +61,7 @@ const Fixtures: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showAddMatch, setShowAddMatch] = useState(false);
   const [newMatch, setNewMatch] = useState<CreateMatchData>({
-    tournament: parseInt(id || '0'),
+    tournament: 0,
     home_team: 0,
     away_team: 0,
     pitch: '',
@@ -72,8 +74,8 @@ const Fixtures: React.FC = () => {
   const navigate = useNavigate();
 
   const fetchData = async () => {
-    if (!id) {
-      setError('Tournament ID is missing.');
+    if (!id && !slug) {
+      setError('Tournament ID or slug is missing.');
       setLoading(false);
       return;
     }
@@ -82,10 +84,22 @@ const Fixtures: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      const [tournamentData, matchesData, registrationsData] = await Promise.all([
-        api<Tournament>(`/tournaments/${id}/`),
-        listMatches(parseInt(id)),
-        listRegistrations(parseInt(id))
+      // Fetch tournament by ID or slug
+      let tournamentData: Tournament;
+      if (id) {
+        tournamentData = await api<Tournament>(`/tournaments/${id}/`);
+      } else if (slug) {
+        tournamentData = await api<Tournament>(`/tournaments/by-slug/${slug}/`);
+      } else {
+        throw new Error('Tournament ID or slug is required');
+      }
+
+      // Update newMatch with tournament ID
+      setNewMatch(prev => ({ ...prev, tournament: tournamentData.id }));
+
+      const [matchesData, registrationsData] = await Promise.all([
+        listMatches(tournamentData.id),
+        listRegistrations(tournamentData.id)
       ]);
 
       setTournament(tournamentData);
