@@ -66,6 +66,41 @@ export default function StepReview({ state, onFinish, onSaveDraft }: StepReviewP
           </div>
         </motion.div>
 
+        {/* Prizes Card */}
+        {state.prizes && (state.prizes.first_prize || state.prizes.second_prize || state.prizes.third_prize) && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="card bg-zinc-900/50 border border-zinc-700"
+          >
+            <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+              <Trophy className="w-5 h-5 text-yellow-500" />
+              Prize Money
+            </h3>
+            <div className="space-y-3 text-sm">
+              {state.prizes.first_prize > 0 && (
+                <div>
+                  <span className="text-gray-400">1st Prize:</span>
+                  <span className="text-white ml-2 font-semibold text-yellow-500">R{state.prizes.first_prize}</span>
+                </div>
+              )}
+              {state.prizes.second_prize > 0 && (
+                <div>
+                  <span className="text-gray-400">2nd Prize:</span>
+                  <span className="text-white ml-2 font-semibold text-gray-300">R{state.prizes.second_prize}</span>
+                </div>
+              )}
+              {state.prizes.third_prize > 0 && (
+                <div>
+                  <span className="text-gray-400">3rd Prize:</span>
+                  <span className="text-white ml-2 font-semibold text-orange-400">R{state.prizes.third_prize}</span>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
         {/* Rules Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}

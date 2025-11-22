@@ -7,6 +7,7 @@ import StepFormat from './StepFormat';
 import StepBasics from './StepBasics';
 import StepRules from './StepRules';
 import StepStructure from './StepStructure';
+import StepPrizes from './StepPrizes';
 import StepReview from './StepReview';
 
 export type Format = 'league' | 'knockout' | 'combination';
@@ -26,6 +27,9 @@ export interface WizardState {
     venue_name: string;
     venue_address?: string;
     map_link?: string;
+    contact_phone?: string;
+    contact_email?: string;
+    whatsapp_url?: string;
   };
   rules: {
     win_pts: number;
@@ -58,9 +62,14 @@ export interface WizardState {
     gallery_urls?: string;
     sponsors?: string;
   };
+  prizes?: {
+    first_prize?: number;
+    second_prize?: number;
+    third_prize?: number;
+  };
 }
 
-const STEPS = ['format', 'basics', 'rules', 'structure', 'review'] as const;
+const STEPS = ['format', 'basics', 'rules', 'structure', 'prizes', 'review'] as const;
 type Step = typeof STEPS[number];
 
 const defaultState: WizardState = {
@@ -179,6 +188,14 @@ export default function TournamentWizard() {
         banner_image: newState.marketing?.banner_image || '',
         gallery_urls: newState.marketing?.gallery_urls || '',
         sponsors: newState.marketing?.sponsors || '',
+        // Prize money
+        first_prize: newState.prizes?.first_prize || 0,
+        second_prize: newState.prizes?.second_prize || 0,
+        third_prize: newState.prizes?.third_prize || 0,
+        // Contact information
+        contact_phone: newState.basics.contact_phone || '',
+        contact_email: newState.basics.contact_email || '',
+        whatsapp_url: newState.basics.whatsapp_url || '',
         // Venue handling for wizard
         venue_name: newState.basics.venue_name,
         venue_address: newState.basics.venue_address || '',
@@ -224,7 +241,7 @@ export default function TournamentWizard() {
     
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.id, state.basics.name, state.basics.city, state.format, state.rules, state.structure]);
+  }, [state.id, state.basics.name, state.basics.city, state.format, state.rules, state.structure, state.prizes]);
   
   // Log format changes for debugging
   useEffect(() => {
@@ -368,6 +385,8 @@ export default function TournamentWizard() {
         return <StepRules state={state} updateState={updateState} />;
       case 'structure':
         return <StepStructure state={state} updateState={updateState} />;
+      case 'prizes':
+        return <StepPrizes state={state} updateState={updateState} />;
       case 'review':
         return <StepReview state={state} updateState={updateState} onFinish={handleFinish} onSaveDraft={handleSaveDraft} />;
       default:

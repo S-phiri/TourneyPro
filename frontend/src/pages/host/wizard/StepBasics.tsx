@@ -186,6 +186,45 @@ export default function StepBasics({ state, updateState }: StepBasicsProps) {
           </div>
         </div>
 
+        {/* Contact Information Section */}
+        <div className="mt-8 pt-8 border-t border-zinc-700">
+          <h3 className="text-xl font-bold text-white mb-4">Contact Information</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="form-label text-white">Contact Phone</label>
+              <input
+                type="tel"
+                value={state.basics.contact_phone || ''}
+                onChange={(e) => handleChange('contact_phone', e.target.value)}
+                className="form-input bg-zinc-800 border-zinc-600 text-white"
+                placeholder="e.g., 0742103896"
+              />
+            </div>
+
+            <div>
+              <label className="form-label text-white">Contact Email</label>
+              <input
+                type="email"
+                value={state.basics.contact_email || ''}
+                onChange={(e) => handleChange('contact_email', e.target.value)}
+                className="form-input bg-zinc-800 border-zinc-600 text-white"
+                placeholder="tournament@example.com"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="form-label text-white">WhatsApp URL</label>
+              <input
+                type="url"
+                value={state.basics.whatsapp_url || ''}
+                onChange={(e) => handleChange('whatsapp_url', e.target.value)}
+                className="form-input bg-zinc-800 border-zinc-600 text-white"
+                placeholder="https://wa.me/27123456789"
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Marketing Section */}
         <div className="mt-8 pt-8 border-t border-zinc-700">
           <h3 className="text-xl font-bold text-white mb-4">Marketing & Branding (Optional)</h3>

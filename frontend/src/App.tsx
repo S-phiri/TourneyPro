@@ -18,6 +18,7 @@ import AddPlayers from "./pages/AddPlayers";
 import TeamHub from "./pages/TeamHub";
 import PlayerProfile from "./pages/PlayerProfile";
 import Fixtures from "./pages/Fixtures";
+import TournamentAwards from "./pages/TournamentAwards";
 import TournamentWizard from "./pages/host/wizard/TournamentWizard";
 import ProtectedRoute from "./components/ProtectedRoute";
 import RegistrationSuccess from "./pages/RegistrationSuccess";
@@ -44,11 +45,13 @@ function App() {
                 <Route path="/tournaments/:id/register" element={<RegisterTeam />} />
                 <Route path="/tournaments/:id/registration/success" element={<RegistrationSuccess />} />
                 <Route path="/tournaments/:id/fixtures" element={<Fixtures />} />
+                <Route path="/tournaments/:id/awards" element={<TournamentAwards />} />
                 <Route path="/teams/:id/add-players" element={<AddPlayers />} />
                 <Route path="/teams/:id" element={<TeamHub />} />
                 <Route path="/players/:id" element={<PlayerProfile />} />
                 <Route path="/t/:slug" element={<TournamentBySlug />} />
                 <Route path="/t/:slug/fixtures" element={<Fixtures />} />
+                <Route path="/t/:slug/awards" element={<TournamentAwards />} />
                 <Route path="/t/:slug/register" element={<RegisterTeam />} />
                 <Route path="/t/:slug/registration/success" element={<RegistrationSuccess />} />
                 <Route path="/registration/success" element={<RegistrationSuccess />} />

@@ -233,6 +233,22 @@ export async function getTournamentTopScorers(tournamentId: number) {
 }
 
 // NEW: Get top assists for tournament
+export async function getTournamentAwards(tournamentId: number) {
+  const res = await fetch(`${BASE}/tournaments/${tournamentId}/awards/`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    credentials: 'omit',
+  });
+  
+  if (!res.ok) {
+    throw new Error('Failed to fetch tournament awards');
+  }
+  
+  return res.json();
+}
+
 export async function getTournamentTopAssists(tournamentId: number) {
   const res = await fetch(`${BASE}/tournaments/${tournamentId}/top-assists/`, { 
     credentials: 'include',

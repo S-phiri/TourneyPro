@@ -110,6 +110,7 @@ interface TournamentTabsProps {
   isOrganiser?: boolean;
   tournamentId?: number; // NEW: Tournament ID for mark-paid action
   tournamentFormat?: 'league' | 'knockout' | 'combination'; // NEW: Tournament format
+  tournament?: { id: number; status: string; slug?: string }; // NEW: Tournament object for awards link
   onAddTeam?: () => void;
   onAddMatch?: () => void;
   onUpdateScore?: (matchId: string) => void;
@@ -172,6 +173,7 @@ export default function TournamentTabs({
   isOrganiser = false,
   tournamentId, // NEW: Tournament ID
   tournamentFormat, // NEW: Tournament format
+  tournament, // NEW: Tournament object
   onAddTeam = () => {},
   onAddMatch = () => {},
   onUpdateScore = () => {},
@@ -184,7 +186,7 @@ export default function TournamentTabs({
     : (standingsData?.format === 'league' 
       ? (standingsData as LeagueStandingsData).standings 
       : leaderboard); // Fallback to legacy leaderboard prop
-  const [activeTab, setActiveTab] = useState<"registrations" | "fixtures" | "live" | "leaderboard" | "individual-stats">("registrations");
+  const [activeTab, setActiveTab] = useState<"registrations" | "fixtures" | "live" | "leaderboard" | "individual-stats" | "awards">("registrations");
   const [activeStatTab, setActiveStatTab] = useState<"scorers" | "assists" | "clean-sheets" | "contributions">("scorers");
 
   const tabs = [
@@ -192,7 +194,8 @@ export default function TournamentTabs({
     { id: "fixtures", label: "Fixtures & Results" },
     ...(liveMatches && liveMatches.length > 0 ? [{ id: "live" as const, label: `Live (${liveMatches.length})` }] : []),
     { id: "leaderboard", label: "Standings" },
-    { id: "individual-stats", label: "Individual Stats" }
+    { id: "individual-stats", label: "Individual Stats" },
+    ...(tournament && tournament.status === 'completed' ? [{ id: "awards" as const, label: "Awards" }] : [])
   ];
 
   return (
@@ -717,6 +720,26 @@ export default function TournamentTabs({
                   })()}
                 </div>
               )}
+            </motion.div>
+          )}
+
+          {activeTab === "awards" && tournament && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <div className="text-center py-12">
+                <Trophy className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
+                <h3 className="text-2xl font-bold text-white mb-4">Tournament Awards</h3>
+                <p className="text-gray-400 mb-6">View all tournament awards and winners</p>
+                <a
+                  href={tournament.slug ? `/t/${tournament.slug}/awards` : `/tournaments/${tournament.id}/awards`}
+                  className="inline-block bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold px-6 py-3 rounded-lg transition-all"
+                >
+                  View Awards Page
+                </a>
+              </div>
             </motion.div>
           )}
         </div>

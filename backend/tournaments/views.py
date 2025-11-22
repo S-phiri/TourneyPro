@@ -121,6 +121,20 @@ class TournamentViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(tournaments, many=True)
         return Response(serializer.data)
     
+    @action(detail=True, methods=['get'], url_path='awards', permission_classes=[AllowAny])
+    def awards(self, request, pk=None):
+        """Get tournament awards: Top Scorer, MVP, Winners"""
+        tournament = self.get_object()
+        from .awards import get_top_scorer, get_mvp, get_tournament_winner, get_tournament_runner_up, get_tournament_third_place
+        
+        return Response({
+            'top_scorer': get_top_scorer(tournament),
+            'mvp': get_mvp(tournament),
+            'winner': get_tournament_winner(tournament),
+            'runner_up': get_tournament_runner_up(tournament),
+            'third_place': get_tournament_third_place(tournament)
+        })
+    
     @action(detail=True, methods=['get'], url_path='standings')
     def standings(self, request, pk=None):
         """Get tournament standings calculated from matches"""

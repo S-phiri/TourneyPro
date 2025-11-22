@@ -9,6 +9,7 @@ import { Registration } from '../lib/registrations';
 import { listRegistrations } from '../lib/registrations';
 import { listMatches } from '../lib/matches';
 import { formatDate, formatCurrency, parseCSV, parseSponsors } from '../lib/helpers';
+import { Trophy } from 'lucide-react';
 import TournamentHero from '../components/tournament/TournamentHero';
 import LiveTicker from '../components/tournament/LiveTicker';
 import OverviewStats from '../components/tournament/OverviewStats';
@@ -760,6 +761,36 @@ const TournamentDetail: React.FC = () => {
       )}
 
       {/* Prizes */}
+      {/* Prize Money */}
+      {(tournament.first_prize > 0 || tournament.second_prize > 0 || tournament.third_prize > 0) && (
+        <div className="bg-gradient-to-br from-yellow-500/20 to-yellow-600/10 border border-yellow-500/30 rounded-xl p-6 mb-8">
+          <h3 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
+            <Trophy className="w-6 h-6 text-yellow-500" />
+            Prize Money
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {tournament.first_prize > 0 && (
+              <div className="text-center">
+                <p className="text-gray-400 text-sm mb-1">1st Prize</p>
+                <p className="text-2xl font-bold text-yellow-500">R{tournament.first_prize.toFixed(2)}</p>
+              </div>
+            )}
+            {tournament.second_prize > 0 && (
+              <div className="text-center">
+                <p className="text-gray-400 text-sm mb-1">2nd Prize</p>
+                <p className="text-2xl font-bold text-gray-300">R{tournament.second_prize.toFixed(2)}</p>
+              </div>
+            )}
+            {tournament.third_prize > 0 && (
+              <div className="text-center">
+                <p className="text-gray-400 text-sm mb-1">3rd Prize</p>
+                <p className="text-2xl font-bold text-orange-400">R{tournament.third_prize.toFixed(2)}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {tournament.prizes_md && (
         <section className="section bg-gray-800">
           <div className="container">
