@@ -19,6 +19,32 @@ interface AwardsData {
     };
     goals: number;
   };
+  top_assister?: {
+    player: {
+      id: number;
+      first_name: string;
+      last_name: string;
+      full_name: string;
+    };
+    team: {
+      id: number;
+      name: string;
+    };
+    assists: number;
+  };
+  clean_sheets_leader?: {
+    player: {
+      id: number;
+      first_name: string;
+      last_name: string;
+      full_name: string;
+    };
+    team: {
+      id: number;
+      name: string;
+    };
+    clean_sheets: number;
+  };
   mvp?: {
     player: {
       id: number;
@@ -125,6 +151,8 @@ const TournamentAwards: React.FC = () => {
 
   const hasAwards = awards && (
     awards.top_scorer ||
+    awards.top_assister ||
+    awards.clean_sheets_leader ||
     awards.mvp ||
     awards.winner ||
     awards.runner_up ||
@@ -188,14 +216,34 @@ const TournamentAwards: React.FC = () => {
               </motion.div>
             )}
 
-            {/* Top Scorer and MVP - Side by Side */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Top Scorer, Top Assister, Clean Sheets Leader, and MVP */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {awards.top_scorer && (
                 <AwardCard
                   type="top_scorer"
                   title="Top Scorer"
                   winner={awards.top_scorer}
                   stats={`${awards.top_scorer.goals} goals`}
+                  crowned={true}
+                />
+              )}
+
+              {awards.top_assister && (
+                <AwardCard
+                  type="top_assister"
+                  title="Top Assister"
+                  winner={awards.top_assister}
+                  stats={`${awards.top_assister.assists} assists`}
+                  crowned={true}
+                />
+              )}
+
+              {awards.clean_sheets_leader && (
+                <AwardCard
+                  type="clean_sheets"
+                  title="Clean Sheets Leader"
+                  winner={awards.clean_sheets_leader}
+                  stats={`${awards.clean_sheets_leader.clean_sheets} clean sheets`}
                   crowned={true}
                 />
               )}

@@ -485,3 +485,47 @@ def get_tournament_third_place(tournament):
     # Knockout format typically doesn't have third place
     return None
 
+
+def get_clean_sheets_leader(tournament):
+    """
+    Get goalkeeper with most clean sheets in tournament.
+    Returns dict with player info, team, and clean sheets count.
+    """
+    # Get all teams in tournament
+    team_ids = Team.objects.filter(
+        registrations__tournament=tournament,
+        registrations__status__in=['pending', 'paid']
+    ).values_list('id', flat=True)
+    
+    # Get goalkeepers from those teams, ordered by clean sheets
+    goalkeepers = Player.objects.filter(
+        memberships__team_id__in=team_ids,
+        position='GK',
+        clean_sheets__gt=0
+    ).order_by('-clean_sheets', 'first_name', 'last_name')
+    
+    if not goalkeepers.exists():
+        return None
+    
+    top_gk = goalkeepers.first()
+    
+    # Get player's team in this tournament
+    team_player = TeamPlayer.objects.filter(
+        player=top_gk,
+        team_id__in=team_ids
+    ).select_related('team').first()
+    
+    return {
+        'player': {
+            'id': top_gk.id,
+            'first_name': top_gk.first_name,
+            'last_name': top_gk.last_name,
+            'full_name': f"{top_gk.first_name} {top_gk.last_name}".strip()
+        },
+        'team': {
+            'id': team_player.team.id if team_player else None,
+            'name': team_player.team.name if team_player else 'Unknown'
+        } if team_player else None,
+        'clean_sheets': top_gk.clean_sheets or 0
+    }
+

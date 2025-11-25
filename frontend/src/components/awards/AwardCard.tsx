@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { Trophy, Star, Award, Medal } from 'lucide-react';
 
 interface AwardCardProps {
-  type: 'top_scorer' | 'mvp' | 'winner' | 'runner_up' | 'third_place';
+  type: 'top_scorer' | 'top_assister' | 'clean_sheets' | 'mvp' | 'winner' | 'runner_up' | 'third_place';
   title: string;
   winner?: {
     player?: {
@@ -18,6 +18,7 @@ interface AwardCardProps {
     };
     goals?: number;
     assists?: number;
+    clean_sheets?: number;
     mvp_score?: number;
   };
   stats?: string;
@@ -33,6 +34,10 @@ const AwardCard: React.FC<AwardCardProps> = ({ type, title, winner, stats, crown
     switch (type) {
       case 'top_scorer':
         return <Award className="w-12 h-12 text-yellow-500" />;
+      case 'top_assister':
+        return <Award className="w-12 h-12 text-blue-500" />;
+      case 'clean_sheets':
+        return <Award className="w-12 h-12 text-green-500" />;
       case 'mvp':
         return <Star className="w-12 h-12 text-yellow-500" />;
       case 'winner':
@@ -52,6 +57,10 @@ const AwardCard: React.FC<AwardCardProps> = ({ type, title, winner, stats, crown
       case 'mvp':
       case 'winner':
         return 'bg-gradient-to-br from-yellow-500/20 to-yellow-600/10 border-yellow-500/50';
+      case 'top_assister':
+        return 'bg-gradient-to-br from-blue-500/20 to-blue-600/10 border-blue-500/50';
+      case 'clean_sheets':
+        return 'bg-gradient-to-br from-green-500/20 to-green-600/10 border-green-500/50';
       case 'runner_up':
         return 'bg-gradient-to-br from-gray-400/20 to-gray-500/10 border-gray-400/50';
       case 'third_place':

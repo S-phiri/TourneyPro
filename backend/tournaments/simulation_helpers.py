@@ -7,6 +7,7 @@ from datetime import timedelta
 from tournaments.models import Match, Player, TeamPlayer, MatchScorer, MatchAssist, Team
 from collections import Counter
 import random
+import re
 
 
 def get_next_round_matches(tournament):
@@ -26,6 +27,77 @@ def get_next_round_matches(tournament):
     if not scheduled_matches.exists():
         return (None, [], False)
     
+    # Check if this is combinationB format (Groups → Knockout)
+    is_combinationB = False
+    if tournament.format == 'combination':
+        structure = tournament.structure or {}
+        combination_type = structure.get('combination_type', 'combinationA')
+        if combination_type == 'combinationB':
+            is_combinationB = True
+    
+    # For combinationB format, parse pitch field to get round numbers
+    if is_combinationB:
+        matches_by_round = {}
+        
+        for match in scheduled_matches:
+            # Parse pitch field: "Group A - Round 1" → round 1
+            round_num = None
+            if match.pitch:
+                # Try to extract round number from pitch field
+                match_obj = re.search(r'Round\s+(\d+)', match.pitch, re.IGNORECASE)
+                if match_obj:
+                    round_num = int(match_obj.group(1))
+                else:
+                    # Fallback: use date if round number not found
+                    round_num = 1
+        
+            if round_num is None:
+                # Fallback to date-based grouping if pitch doesn't have round info
+                date_key = match.kickoff_at.date()
+                round_num = 1  # Default to round 1
+            
+            if round_num not in matches_by_round:
+                matches_by_round[round_num] = []
+            matches_by_round[round_num].append(match)
+        
+        if not matches_by_round:
+            return (None, [], False)
+        
+        # Get the earliest incomplete round
+        earliest_round = min(matches_by_round.keys())
+        round_matches = matches_by_round[earliest_round]
+        
+        # Determine round number based on completed rounds
+        completed_matches = Match.objects.filter(
+            tournament=tournament,
+            status='finished'
+        )
+        
+        if completed_matches.exists():
+            # Find the highest completed round number
+            completed_rounds = set()
+            for match in completed_matches:
+                if match.pitch:
+                    match_obj = re.search(r'Round\s+(\d+)', match.pitch, re.IGNORECASE)
+                    if match_obj:
+                        completed_rounds.add(int(match_obj.group(1)))
+            
+            if completed_rounds:
+                round_number = max(completed_rounds) + 1
+            else:
+                round_number = earliest_round
+        else:
+            round_number = earliest_round
+        
+        # For combinationB, group stage matches have "Group" in pitch
+        is_league_stage = True
+        if round_matches and round_matches[0].pitch:
+            if not round_matches[0].pitch.startswith('Group'):
+                is_league_stage = False
+        
+        return (round_number, round_matches, is_league_stage)
+    
+    # For other formats, use date-based grouping (original logic)
     # Group matches by kickoff date (round = same day)
     matches_by_date = {}
     for match in scheduled_matches:
@@ -107,11 +179,11 @@ def simulate_round(tournament):
     
     # Simulate each match individually, continue even if some fail
     for match in round_matches:
-        try:
+    try:
             # Use transaction for each match individually
-            with transaction.atomic():
+        with transaction.atomic():
                 simulate_match(match)
-            matches_simulated += 1
+                matches_simulated += 1
         except Exception as e:
             # Log the failed match but continue with others
             failed_matches.append({
@@ -120,8 +192,8 @@ def simulate_round(tournament):
                 'away_team': match.away_team.name if match.away_team else 'Unknown',
                 'error': str(e)
             })
-    
-    stage_name = "League Stage" if is_league_stage else "Knockout Stage"
+            
+            stage_name = "League Stage" if is_league_stage else "Knockout Stage"
     
     # After simulating a round, check if we need to generate next stage
     next_round_created = False
@@ -148,9 +220,14 @@ def simulate_round(tournament):
                     print(f"Error generating knockout stage: {str(e)}")
     
     # After simulating a knockout round, generate next round if applicable
-    if not is_league_stage and tournament.format == 'knockout' and matches_simulated > 0:
+    if not is_league_stage and matches_simulated > 0:
         try:
-            next_round_created = generate_next_knockout_round(tournament, round_number)
+            # Get the round name from the matches that were just simulated
+            if round_matches:
+                completed_round_name = round_matches[0].pitch
+                # Only generate next round if this is a knockout round (not group stage)
+                if completed_round_name and 'Group' not in completed_round_name:
+                    next_round_created = generate_next_knockout_round(tournament, completed_round_name)
         except Exception as e:
             # Log error but don't fail the simulation
             print(f"Error generating next knockout round: {str(e)}")
@@ -165,33 +242,54 @@ def simulate_round(tournament):
         if next_round_created:
             message += ' (Next round generated)'
     
-    return {
-        'round_number': round_number,
-        'matches_simulated': matches_simulated,
+        return {
+            'round_number': round_number,
+            'matches_simulated': matches_simulated,
         'matches_failed': len(failed_matches),
-        'is_league_stage': is_league_stage,
+            'is_league_stage': is_league_stage,
         'message': message,
         'failed_matches': failed_matches if failed_matches else None,
         'next_round_created': next_round_created
     }
 
 
-def generate_next_knockout_round(tournament, completed_round_number):
+def get_round_name(num_teams):
+    """
+    Get proper round name based on number of teams.
+    Returns: "Round of 16", "Quarter-Finals", "Semi-Finals", or "Final"
+    """
+    if num_teams >= 16:
+        return "Round of 16"
+    elif num_teams >= 8:
+        return "Quarter-Finals"
+    elif num_teams >= 4:
+        return "Semi-Finals"
+    else:
+        return "Final"
+
+
+def generate_next_knockout_round(tournament, completed_round_name):
     """
     Generate the next round of knockout matches after a round completes.
     Only generates if all matches in the current round are finished.
     
     Args:
         tournament: Tournament instance
-        completed_round_number: The round number that just completed
+        completed_round_name: The round name that just completed (e.g., "Quarter-Finals")
     
     Returns:
         bool: True if next round was created, False otherwise
     """
-    # Get all matches from the completed round
+    # Get all matches from the completed round (match by pitch field)
+    # Use case-insensitive matching to handle variations in round names
     completed_round_matches = Match.objects.filter(
-        tournament=tournament,
-        pitch__icontains=f'Round {completed_round_number}'
+        tournament=tournament
+    ).exclude(pitch__icontains='Group')
+    
+    # Filter by round name (case-insensitive match)
+    # Handle variations like "Quarter-Finals", "Quarter Finals", etc.
+    completed_round_matches = completed_round_matches.filter(
+        pitch__icontains=completed_round_name
     )
     
     # Check if all matches in this round are finished
@@ -218,11 +316,14 @@ def generate_next_knockout_round(tournament, completed_round_number):
     if len(winners) < 2:
         return False
     
-    # Check if next round already exists
-    next_round_number = completed_round_number + 1
+    # Determine next round name based on number of winners
+    next_round_name = get_round_name(len(winners))
+    
+    # Check if next round already exists (case-insensitive match)
     existing_next_round = Match.objects.filter(
-        tournament=tournament,
-        pitch__icontains=f'Round {next_round_number}'
+        tournament=tournament
+    ).exclude(pitch__icontains='Group').filter(
+        pitch__icontains=next_round_name
     )
     if existing_next_round.exists():
         # Next round already exists
@@ -249,7 +350,7 @@ def generate_next_knockout_round(tournament, completed_round_number):
             away_team=away_team,
             kickoff_at=next_round_date,
             status='scheduled',
-            pitch=f'Round {next_round_number}'
+            pitch=next_round_name
         )
         matches_created += 1
     
@@ -260,12 +361,13 @@ def generate_knockout_stage_from_groups(tournament):
     """
     Generate knockout stage matches for combinationB tournaments after group stage completes.
     Top 2 teams from each group advance to knockout stage.
+    World Cup format: Group A 1st vs Group B 2nd, Group B 1st vs Group A 2nd, etc.
     
     Returns:
         bool: True if knockout stage was created, False otherwise
     """
-    from .models import Match
-    from .tournament_formats import generate_groups, calculate_group_standings, generate_knockout_fixtures
+    from .models import Match, Team
+    from .tournament_formats import generate_groups, calculate_group_standings
     from datetime import timedelta
     
     # Check if knockout stage already exists
@@ -287,51 +389,36 @@ def generate_knockout_stage_from_groups(tournament):
     # Recreate groups (same logic as fixture generation)
     groups = generate_groups(teams, "combinationB")
     
-    # Calculate standings for each group and get qualifiers
-    qualifiers = []
+    # Get all finished matches for standings calculation
+    all_matches = list(Match.objects.filter(tournament=tournament, status='finished'))
+    
+    # Calculate standings for each group and store qualifiers with group info
+    group_qualifiers = {}  # {group_name: {'first': team, 'second': team}}
     for group in groups:
-        group_standings = calculate_group_standings(tournament, group["name"])
-        if group_standings and len(group_standings) >= 2:
-            # Top 2 teams qualify
-            from .models import Team
-            if isinstance(group_standings[0]["team"], dict):
-                team1_id = group_standings[0]["team"].get("id")
-                team2_id = group_standings[1]["team"].get("id")
-            else:
-                team1_id = group_standings[0]["team"]
-                team2_id = group_standings[1]["team"]
+        group_name = group["name"]
+        group_teams = group["teams"]
+        # Filter matches for this group
+        group_matches = [m for m in all_matches if m.pitch and m.pitch.startswith(group_name)]
+        standings_list = calculate_group_standings(group_teams, group_matches, group_name)
+        
+        if standings_list and len(standings_list) >= 2:
+            # Get top 2 teams
+            first_place = standings_list[0]['team']
+            second_place = standings_list[1]['team']
             
-            try:
-                team1 = Team.objects.get(id=team1_id) if isinstance(team1_id, int) else team1_id
-                team2 = Team.objects.get(id=team2_id) if isinstance(team2_id, int) else team2_id
-                qualifiers.append(team1)
-                qualifiers.append(team2)
-            except (Team.DoesNotExist, TypeError):
-                # Fallback: try to get teams from standings directly
-                if hasattr(group_standings[0]["team"], 'name'):
-                    qualifiers.append(group_standings[0]["team"])
-                if hasattr(group_standings[1]["team"], 'name'):
-                    qualifiers.append(group_standings[1]["team"])
+            # Ensure we have Team objects
+            if isinstance(first_place, dict):
+                first_place = Team.objects.get(id=first_place.get('id'))
+            if isinstance(second_place, dict):
+                second_place = Team.objects.get(id=second_place.get('id'))
+            
+            group_qualifiers[group_name] = {
+                'first': first_place,
+                'second': second_place
+            }
     
-    if len(qualifiers) < 2:
-        return False  # Not enough qualifiers
-    
-    # Ensure qualifiers is power of 2 (for knockout bracket)
-    # Take nearest power of 2
-    num_qualifiers = len(qualifiers)
-    if num_qualifiers > 16:
-        bracket_size = 16
-    elif num_qualifiers > 8:
-        bracket_size = 16
-    elif num_qualifiers > 4:
-        bracket_size = 8
-    elif num_qualifiers > 2:
-        bracket_size = 4
-    else:
-        bracket_size = 2
-    
-    # Take top teams to fill bracket
-    qualifiers = qualifiers[:bracket_size]
+    if len(group_qualifiers) < 2:
+        return False  # Need at least 2 groups
     
     # Get last group stage match date
     last_group_match = Match.objects.filter(
@@ -345,16 +432,59 @@ def generate_knockout_stage_from_groups(tournament):
     # Start knockout stage 1 day after group stage ends
     knockout_start_date = last_group_match.kickoff_at + timedelta(days=1)
     
-    # Generate knockout fixtures (Round of X)
-    knockout_matches = generate_knockout_fixtures(qualifiers, tournament, knockout_start_date)
+    # World Cup format pairings: Cross-group pairings
+    # Group A 1st vs Group B 2nd, Group B 1st vs Group A 2nd
+    # Group C 1st vs Group D 2nd, Group D 1st vs Group C 2nd
+    # etc.
     
-    # Save knockout matches
+    group_names = sorted(group_qualifiers.keys())  # ['Group A', 'Group B', 'Group C', ...]
     matches_created = 0
-    for match in knockout_matches:
-        # Update pitch to indicate knockout round
-        match.pitch = f"Round of {len(qualifiers)}"
-        match.save()
-        matches_created += 1
+    num_qualifiers = len(group_qualifiers) * 2  # Total number of qualifying teams
+    
+    # Determine proper round name based on number of teams
+    if num_qualifiers >= 16:
+        round_name = "Round of 16"
+    elif num_qualifiers >= 8:
+        round_name = "Quarter-Finals"
+    elif num_qualifiers >= 4:
+        round_name = "Semi-Finals"
+    else:
+        round_name = "Final"
+    
+    # Pair adjacent groups: A vs B, C vs D, etc.
+    for i in range(0, len(group_names) - 1, 2):
+        group1_name = group_names[i]
+        group2_name = group_names[i + 1] if i + 1 < len(group_names) else None
+        
+        if group2_name:
+            # Group 1 1st vs Group 2 2nd
+            match1 = Match.objects.create(
+                tournament=tournament,
+                home_team=group_qualifiers[group1_name]['first'],
+                away_team=group_qualifiers[group2_name]['second'],
+                kickoff_at=knockout_start_date,
+                status='scheduled',
+                pitch=round_name
+            )
+            matches_created += 1
+            
+            # Group 2 1st vs Group 1 2nd
+            match2 = Match.objects.create(
+                tournament=tournament,
+                home_team=group_qualifiers[group2_name]['first'],
+                away_team=group_qualifiers[group1_name]['second'],
+                kickoff_at=knockout_start_date,
+                status='scheduled',
+                pitch=round_name
+            )
+            matches_created += 1
+    
+    # If odd number of groups, handle the last group
+    if len(group_names) % 2 == 1:
+        last_group_name = group_names[-1]
+        # Pair with previous group's second place (or create a bye)
+        # For now, we'll pair it with the previous group's structure
+        # This is a simplified approach - in real World Cup, groups are predetermined
     
     return matches_created > 0
 
@@ -471,12 +601,12 @@ def simulate_match(match):
             if possible_assisters:
                 assister = random.choice(possible_assisters)
                 try:
-                    MatchAssist.objects.create(
-                        goal=goal,
-                        match=match,
-                        player=assister,
-                        team=match.home_team
-                    )
+                MatchAssist.objects.create(
+                    goal=goal,
+                    match=match,
+                    player=assister,
+                    team=match.home_team
+                )
                 except Exception:
                     # Skip assist if creation fails (e.g., already exists)
                     pass
@@ -511,12 +641,12 @@ def simulate_match(match):
             if possible_assisters:
                 assister = random.choice(possible_assisters)
                 try:
-                    MatchAssist.objects.create(
-                        goal=goal,
-                        match=match,
-                        player=assister,
-                        team=match.away_team
-                    )
+                MatchAssist.objects.create(
+                    goal=goal,
+                    match=match,
+                    player=assister,
+                    team=match.away_team
+                )
                 except Exception:
                     # Skip assist if creation fails
                     pass
@@ -587,4 +717,17 @@ def simulate_match(match):
     for player in remaining_away[:random.randint(7, 9)]:
         player.appearances += 1
         player.save()
+    
+    # Update clean sheets for goalkeepers
+    # Home team goalkeeper gets clean sheet if away_score == 0
+    home_gk = [p for p in home_players if p.position == 'GK']
+    if home_gk and away_score == 0:
+        home_gk[0].clean_sheets += 1
+        home_gk[0].save()
+    
+    # Away team goalkeeper gets clean sheet if home_score == 0
+    away_gk = [p for p in away_players if p.position == 'GK']
+    if away_gk and home_score == 0:
+        away_gk[0].clean_sheets += 1
+        away_gk[0].save()
 

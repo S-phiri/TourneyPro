@@ -123,12 +123,46 @@ class TournamentViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['get'], url_path='awards', permission_classes=[AllowAny])
     def awards(self, request, pk=None):
-        """Get tournament awards: Top Scorer, MVP, Winners"""
+        """Get tournament awards: Top Scorer, Top Assister, Clean Sheets Leader, MVP, Winners"""
         tournament = self.get_object()
-        from .awards import get_top_scorer, get_mvp, get_tournament_winner, get_tournament_runner_up, get_tournament_third_place
+        from .awards import get_top_scorer, get_mvp, get_tournament_winner, get_tournament_runner_up, get_tournament_third_place, get_clean_sheets_leader
+        
+        # Get top assister (player with most assists)
+        top_assister = None
+        team_ids = Team.objects.filter(
+            registrations__tournament=tournament,
+            registrations__status__in=['pending', 'paid']
+        ).values_list('id', flat=True)
+        
+        top_assister_player = Player.objects.filter(
+            memberships__team_id__in=team_ids,
+            assists__gt=0
+        ).order_by('-assists', '-goals').first()
+        
+        if top_assister_player:
+            team_player = TeamPlayer.objects.filter(
+                player=top_assister_player,
+                team_id__in=team_ids
+            ).select_related('team').first()
+            
+            top_assister = {
+                'player': {
+                    'id': top_assister_player.id,
+                    'first_name': top_assister_player.first_name,
+                    'last_name': top_assister_player.last_name,
+                    'full_name': f"{top_assister_player.first_name} {top_assister_player.last_name}".strip()
+                },
+                'team': {
+                    'id': team_player.team.id if team_player else None,
+                    'name': team_player.team.name if team_player else 'Unknown'
+                } if team_player else None,
+                'assists': top_assister_player.assists or 0
+            }
         
         return Response({
             'top_scorer': get_top_scorer(tournament),
+            'top_assister': top_assister,
+            'clean_sheets_leader': get_clean_sheets_leader(tournament),
             'mvp': get_mvp(tournament),
             'winner': get_tournament_winner(tournament),
             'runner_up': get_tournament_runner_up(tournament),
@@ -142,7 +176,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         
         tournament = self.get_object()
         teams = list(Team.objects.filter(registrations__tournament=tournament, registrations__status__in=['pending', 'paid']).distinct())
-        matches = Match.objects.filter(tournament=tournament, status='finished')
+        matches = list(Match.objects.filter(tournament=tournament, status='finished'))
         
         # NEW: Handle combinationB format (Groups → Knockout) with group standings
         structure = tournament.structure or {}

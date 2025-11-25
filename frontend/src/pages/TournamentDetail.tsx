@@ -238,22 +238,31 @@ const TournamentDetail: React.FC = () => {
     manager: toStr(reg?.team?.manager_name)
   }));
 
-  const fixtures = arr(upcomingMatches).map(match => ({
-    id: toStr(match?.id),
-    time: match?.kickoff_at ? new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'TBC',
-    pitch: toStr(match?.pitch) || 'TBA',
-    homeTeam: {
-      id: toStr(match?.home_team?.id),
-      name: toStr(match?.home_team?.name),
-      initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
-    },
-    awayTeam: {
-      id: toStr(match?.away_team?.id),
-      name: toStr(match?.away_team?.name),
-      initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
-    },
-    status: 'upcoming' as const
-  }));
+  const fixtures = arr(upcomingMatches)
+    .map(match => ({
+      id: toStr(match?.id),
+      time: match?.kickoff_at ? new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'TBC',
+      pitch: toStr(match?.pitch) || 'TBA',
+      homeTeam: {
+        id: toStr(match?.home_team?.id),
+        name: toStr(match?.home_team?.name),
+        initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
+      },
+      awayTeam: {
+        id: toStr(match?.away_team?.id),
+        name: toStr(match?.away_team?.name),
+        initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
+      },
+      status: 'upcoming' as const,
+      kickoff_at: match?.kickoff_at // Keep original date for sorting
+    }))
+    .sort((a, b) => {
+      // Sort by date ascending (soonest first)
+      const dateA = a.kickoff_at ? new Date(a.kickoff_at).getTime() : 0;
+      const dateB = b.kickoff_at ? new Date(b.kickoff_at).getTime() : 0;
+      return dateA - dateB;
+    })
+    .map(({ kickoff_at, ...match }) => match); // Remove kickoff_at from final object
 
   const liveMatchesData = arr(liveMatches).map(match => ({
     id: toStr(match?.id),
@@ -277,26 +286,35 @@ const TournamentDetail: React.FC = () => {
     scorers: match?.scorers || []
   }));
 
-  const results = arr(completedMatches).map(match => ({
-    id: toStr(match?.id),
-    time: match?.kickoff_at ? new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'TBC',
-    pitch: toStr(match?.pitch) || 'TBA',
-    homeTeam: {
-      id: toStr(match?.home_team?.id),
-      name: toStr(match?.home_team?.name),
-      initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
-    },
-    awayTeam: {
-      id: toStr(match?.away_team?.id),
-      name: toStr(match?.away_team?.name),
-      initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
-    },
-    homeScore: match?.home_score ?? 0,
-    awayScore: match?.away_score ?? 0,
-    status: 'completed' as const,
-    // NEW: Include scorer and assist data
-    scorers: match?.scorers || []
-  }));
+  const results = arr(completedMatches)
+    .map(match => ({
+      id: toStr(match?.id),
+      time: match?.kickoff_at ? new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'TBC',
+      pitch: toStr(match?.pitch) || 'TBA',
+      homeTeam: {
+        id: toStr(match?.home_team?.id),
+        name: toStr(match?.home_team?.name),
+        initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
+      },
+      awayTeam: {
+        id: toStr(match?.away_team?.id),
+        name: toStr(match?.away_team?.name),
+        initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
+      },
+      homeScore: match?.home_score ?? 0,
+      awayScore: match?.away_score ?? 0,
+      status: 'completed' as const,
+      // NEW: Include scorer and assist data
+      scorers: match?.scorers || [],
+      kickoff_at: match?.kickoff_at // Keep original date for sorting
+    }))
+    .sort((a, b) => {
+      // Sort by date descending (most recent first)
+      const dateA = a.kickoff_at ? new Date(a.kickoff_at).getTime() : 0;
+      const dateB = b.kickoff_at ? new Date(b.kickoff_at).getTime() : 0;
+      return dateB - dateA;
+    })
+    .map(({ kickoff_at, ...match }) => match); // Remove kickoff_at from final object
 
   const formatDateRange = () => {
     const start = fmtDate(tournament.start_date);
@@ -456,165 +474,173 @@ const TournamentDetail: React.FC = () => {
 
               {/* Organiser Actions */}
               {tournamentRole.is_organiser && (
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    onClick={() => {
-                      // NEW: Use slug if available for edit link (though edit might still use ID)
-                      navigate(`/tournaments/${id}/edit`);
-                    }}
-                    className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
-                  >
-                    Edit Tournament
-                  </button>
-                  {availableSlots > 0 && (
+                <div className="w-full">
+                  {/* Main Actions */}
+                  <div className="flex flex-wrap gap-3 mb-4">
                     <button
-                      onClick={async () => {
-                        if (!window.confirm(`Create ${availableSlots} test teams to fill tournament capacity (${currentTeams}/${maxTeams})? This will create managers with password "test1234".`)) {
-                          return;
-                        }
-                        try {
-                          const result = await seedTestTeams(parseInt(id!), { teams: availableSlots, paid: false, players: 0, simulate_games: false });
-                          let message = `✓ Successfully created ${result.teams_created} test teams with ${result.players_created} players!\n\n`;
-                          if (result.matches_created > 0) {
-                            message += `✓ Generated ${result.matches_created} fixtures\n`;
+                      onClick={() => {
+                        navigate(`/tournaments/${id}/edit`);
+                      }}
+                      className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
+                    >
+                      Edit Tournament
+                    </button>
+                    {arr(registrations).length >= (Number(tournament.team_max) || 0) && upcomingMatches.length === 0 && (
+                      <button
+                        onClick={async () => {
+                          const format = tournament.format || 'league';
+                          const formatName = format === 'knockout' ? 'Knockout' : format === 'combination' ? 'Combination' : 'League';
+                          const numTeams = arr(registrations).length;
+                          
+                          let expectedMatches = '';
+                          if (format === 'knockout') {
+                            const firstRound = numTeams % 2 === 0 ? numTeams / 2 : (numTeams - 1) / 2;
+                            expectedMatches = `First round: ${firstRound} matches`;
+                          } else if (format === 'league') {
+                            const total = (numTeams * (numTeams - 1)) / 2;
+                            expectedMatches = `Total: ${total} matches (everyone plays everyone)`;
                           }
-                          message += `\nManager passwords: test1234`;
-                          alert(message);
-                          // Force refresh by waiting a bit then fetching
-                          await new Promise(resolve => setTimeout(resolve, 500));
-                          fetchTournament();
-                        } catch (err: any) {
-                          alert(err.message || 'Failed to seed test teams');
-                        }
-                      }}
-                      className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
-                    >
-                      Seed Test Teams ({availableSlots} slots)
-                    </button>
-                  )}
-                  {/* Add players to existing teams - always visible to organisers */}
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm(`Add 11-15 players to all teams that don't have players yet?`)) {
-                        return;
-                      }
-                      try {
-                        const result = await seedTestTeams(parseInt(id!), { teams: 0, paid: false, players: 0, simulate_games: false });
-                        if (result.error) {
-                          alert(result.error);
-                        } else {
-                          alert(`✓ Added ${result.players_created} players to existing teams!`);
-                        }
-                        fetchTournament();
-                      } catch (err: any) {
-                        alert(err.message || 'Failed to add players');
-                      }
-                    }}
-                    className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
-                    title="Add players to existing teams that don't have players"
-                  >
-                    Add Players to Teams
-                  </button>
-                  {arr(registrations).length >= (Number(tournament.team_max) || 0) && upcomingMatches.length === 0 && (
+                          
+                          const confirmMsg = `Generate fixtures for ${formatName} tournament?\n\n` +
+                            `Teams: ${numTeams}\n` +
+                            `${expectedMatches}\n\n` +
+                            (format === 'league' ? '⚠️ This will create a round-robin where every team plays every other team.\n' : '') +
+                            `Continue?`;
+                          
+                          if (!window.confirm(confirmMsg)) {
+                            return;
+                          }
+                          
+                          try {
+                            await generateFixtures(parseInt(id!));
+                            alert('✓ Fixtures generated successfully!');
+                            fetchTournament();
+                          } catch (err: any) {
+                            alert(`Failed to generate fixtures: ${err.message || 'Unknown error'}`);
+                          }
+                        }}
+                        className="px-5 py-2.5 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
+                      >
+                        Generate Fixtures
+                      </button>
+                    )}
                     <button
-                      onClick={async () => {
-                        // Show format confirmation
-                        const format = tournament.format || 'league';
-                        const formatName = format === 'knockout' ? 'Knockout' : format === 'combination' ? 'Combination' : 'League';
-                        const numTeams = arr(registrations).length;
-                        
-                        let expectedMatches = '';
-                        if (format === 'knockout') {
-                          const firstRound = numTeams % 2 === 0 ? numTeams / 2 : (numTeams - 1) / 2;
-                          expectedMatches = `First round: ${firstRound} matches`;
-                        } else if (format === 'league') {
-                          const total = (numTeams * (numTeams - 1)) / 2;
-                          expectedMatches = `Total: ${total} matches (everyone plays everyone)`;
-                        }
-                        
-                        const confirmMsg = `Generate fixtures for ${formatName} tournament?\n\n` +
-                          `Teams: ${numTeams}\n` +
-                          `${expectedMatches}\n\n` +
-                          (format === 'league' ? '⚠️ This will create a round-robin where every team plays every other team.\n' : '') +
-                          `Continue?`;
-                        
-                        if (!window.confirm(confirmMsg)) {
-                          return;
-                        }
-                        
-                        try {
-                          await generateFixtures(parseInt(id!));
-                          alert('✓ Fixtures generated successfully!');
-                          fetchTournament();
-                        } catch (err: any) {
-                          alert(`Failed to generate fixtures: ${err.message || 'Unknown error'}`);
-                        }
-                      }}
-                      className="px-5 py-2.5 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
+                      onClick={handleManageFixtures}
+                      className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
                     >
-                      Generate Fixtures
+                      Manage Fixtures
                     </button>
-                  )}
-                  {/* Simulate Round - always visible to organisers if there are matches */}
-                  <button
-                    onClick={async () => {
-                      try {
-                        const result = await simulateRound(parseInt(id!));
-                        if (result.round_number) {
-                          const stage = result.is_league_stage ? 'League Stage' : 'Knockout Stage';
-                          alert(`✓ ${result.message}\n\nRound ${result.round_number} (${stage}): ${result.matches_simulated} matches simulated`);
-                        } else {
-                          alert(result.message || 'No matches to simulate');
-                        }
-                        fetchTournament();
-                      } catch (err: any) {
-                        alert(err.message || 'Failed to simulate round');
-                      }
-                    }}
-                    className="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20 hover:-translate-y-0.5"
-                  >
-                    Simulate Round ({upcomingMatches.length || arr(matches).filter((m: any) => m?.status === 'scheduled').length || 0} matches remaining)
-                  </button>
-                  <button
-                    onClick={handleManageFixtures}
-                    className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
-                  >
-                    Manage Fixtures
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const matchCount = arr(matches).length;
-                      if (matchCount === 0) {
-                        alert('No fixtures to clear.');
-                        return;
-                      }
-                      
-                      const confirmMsg = `Delete all ${matchCount} fixtures/matches for this tournament?\n\n` +
-                        `This will delete:\n` +
-                        `- All scheduled matches\n` +
-                        `- All completed matches\n` +
-                        `- All match scores and stats\n` +
-                        `- All scorer and assist records\n\n` +
-                        `This action cannot be undone. Continue?`;
-                      
-                      if (!window.confirm(confirmMsg)) {
-                        return;
-                      }
-                      
-                      try {
-                        const result = await clearFixtures(parseInt(id!));
-                        alert(`✓ ${result.detail || `Successfully deleted ${result.matches_deleted || matchCount} fixtures`}`);
-                        fetchTournament(); // Refresh tournament data
-                      } catch (err: any) {
-                        alert(`Failed to clear fixtures: ${err.message || 'Unknown error'}`);
-                      }
-                    }}
-                    disabled={arr(matches).length === 0}
-                    className="px-5 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-red-500/20 hover:-translate-y-0.5"
-                    title={arr(matches).length === 0 ? 'No fixtures to clear' : 'Delete all matches/fixtures'}
-                  >
-                    Clear Fixtures ({arr(matches).length || 0})
-                  </button>
+                  </div>
+
+                  {/* Testing & Simulation Tools - Always Visible Section */}
+                  <div className="w-full mt-6 pt-6 border-t-2 border-yellow-500/30 bg-zinc-900/30 rounded-lg p-4">
+                    <h3 className="text-lg font-bold text-yellow-400 mb-4 flex items-center gap-2">
+                      <span>🧪</span>
+                      Testing & Simulation Tools
+                    </h3>
+                    <div className="flex flex-wrap gap-3">
+                      {availableSlots > 0 && (
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`Create ${availableSlots} test teams to fill tournament capacity (${currentTeams}/${maxTeams})? This will create managers with password "test1234".`)) {
+                              return;
+                            }
+                            try {
+                              const result = await seedTestTeams(parseInt(id!), { teams: availableSlots, paid: false, players: 0, simulate_games: false });
+                              let message = `✓ Successfully created ${result.teams_created} test teams with ${result.players_created} players!\n\n`;
+                              if (result.matches_created > 0) {
+                                message += `✓ Generated ${result.matches_created} fixtures\n`;
+                              }
+                              message += `\nManager passwords: test1234`;
+                              alert(message);
+                              await new Promise(resolve => setTimeout(resolve, 500));
+                              fetchTournament();
+                            } catch (err: any) {
+                              alert(err.message || 'Failed to seed test teams');
+                            }
+                          }}
+                          className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
+                        >
+                          Seed Test Teams ({availableSlots} slots)
+                        </button>
+                      )}
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm(`Add 11-15 players to all teams that don't have players yet?`)) {
+                            return;
+                          }
+                          try {
+                            const result = await seedTestTeams(parseInt(id!), { teams: 0, paid: false, players: 0, simulate_games: false });
+                            if (result.error) {
+                              alert(result.error);
+                            } else {
+                              alert(`✓ Added ${result.players_created} players to existing teams!`);
+                            }
+                            fetchTournament();
+                          } catch (err: any) {
+                            alert(err.message || 'Failed to add players');
+                          }
+                        }}
+                        className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
+                        title="Add players to existing teams that don't have players"
+                      >
+                        Add Players to Teams
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const result = await simulateRound(parseInt(id!));
+                            if (result.round_number) {
+                              const stage = result.is_league_stage ? 'League Stage' : 'Knockout Stage';
+                              alert(`✓ ${result.message}\n\nRound ${result.round_number} (${stage}): ${result.matches_simulated} matches simulated`);
+                            } else {
+                              alert(result.message || 'No matches to simulate');
+                            }
+                            fetchTournament();
+                          } catch (err: any) {
+                            alert(err.message || 'Failed to simulate round');
+                          }
+                        }}
+                        className="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20 hover:-translate-y-0.5"
+                      >
+                        Simulate Round ({upcomingMatches.length || arr(matches).filter((m: any) => m?.status === 'scheduled').length || 0} matches remaining)
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const matchCount = arr(matches).length;
+                          if (matchCount === 0) {
+                            alert('No fixtures to clear.');
+                            return;
+                          }
+                          
+                          const confirmMsg = `Delete all ${matchCount} fixtures/matches for this tournament?\n\n` +
+                            `This will delete:\n` +
+                            `- All scheduled matches\n` +
+                            `- All completed matches\n` +
+                            `- All match scores and stats\n` +
+                            `- All scorer and assist records\n\n` +
+                            `This action cannot be undone. Continue?`;
+                          
+                          if (!window.confirm(confirmMsg)) {
+                            return;
+                          }
+                          
+                          try {
+                            const result = await clearFixtures(parseInt(id!));
+                            alert(`✓ ${result.detail || `Successfully deleted ${result.matches_deleted || matchCount} fixtures`}`);
+                            fetchTournament();
+                          } catch (err: any) {
+                            alert(`Failed to clear fixtures: ${err.message || 'Unknown error'}`);
+                          }
+                        }}
+                        disabled={arr(matches).length === 0}
+                        className="px-5 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-red-500/20 hover:-translate-y-0.5"
+                        title={arr(matches).length === 0 ? 'No fixtures to clear' : 'Delete all matches/fixtures'}
+                      >
+                        Clear Fixtures ({arr(matches).length || 0})
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -762,29 +788,29 @@ const TournamentDetail: React.FC = () => {
 
       {/* Prizes */}
       {/* Prize Money */}
-      {(tournament.first_prize > 0 || tournament.second_prize > 0 || tournament.third_prize > 0) && (
+      {(Number(tournament.first_prize) > 0 || Number(tournament.second_prize) > 0 || Number(tournament.third_prize) > 0) && (
         <div className="bg-gradient-to-br from-yellow-500/20 to-yellow-600/10 border border-yellow-500/30 rounded-xl p-6 mb-8">
           <h3 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
             <Trophy className="w-6 h-6 text-yellow-500" />
             Prize Money
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {tournament.first_prize > 0 && (
+            {Number(tournament.first_prize) > 0 && (
               <div className="text-center">
                 <p className="text-gray-400 text-sm mb-1">1st Prize</p>
-                <p className="text-2xl font-bold text-yellow-500">R{tournament.first_prize.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-yellow-500">R{Number(tournament.first_prize).toFixed(2)}</p>
               </div>
             )}
-            {tournament.second_prize > 0 && (
+            {Number(tournament.second_prize) > 0 && (
               <div className="text-center">
                 <p className="text-gray-400 text-sm mb-1">2nd Prize</p>
-                <p className="text-2xl font-bold text-gray-300">R{tournament.second_prize.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-gray-300">R{Number(tournament.second_prize).toFixed(2)}</p>
               </div>
             )}
-            {tournament.third_prize > 0 && (
+            {Number(tournament.third_prize) > 0 && (
               <div className="text-center">
                 <p className="text-gray-400 text-sm mb-1">3rd Prize</p>
-                <p className="text-2xl font-bold text-orange-400">R{tournament.third_prize.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-orange-400">R{Number(tournament.third_prize).toFixed(2)}</p>
               </div>
             )}
           </div>

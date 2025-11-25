@@ -79,8 +79,9 @@ const TournamentForm: React.FC<TournamentFormProps> = ({
     if (formData.start_date && formData.end_date) {
       const startDate = new Date(formData.start_date);
       const endDate = new Date(formData.end_date);
-      if (endDate <= startDate) {
-        newErrors.end_date = 'End date must be after start date';
+      // Allow same date (times can be different), only error if end date is before start date
+      if (endDate < startDate) {
+        newErrors.end_date = 'End date cannot be before start date';
       }
     }
 

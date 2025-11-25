@@ -188,6 +188,8 @@ export default function TournamentTabs({
       : leaderboard); // Fallback to legacy leaderboard prop
   const [activeTab, setActiveTab] = useState<"registrations" | "fixtures" | "live" | "leaderboard" | "individual-stats" | "awards">("registrations");
   const [activeStatTab, setActiveStatTab] = useState<"scorers" | "assists" | "clean-sheets" | "contributions">("scorers");
+  // NEW: Sub-tabs for standings (Group vs Knockouts)
+  const [activeStandingsTab, setActiveStandingsTab] = useState<"group" | "knockouts">("group");
 
   const tabs = [
     { id: "registrations", label: "Registrations" },
@@ -359,43 +361,13 @@ export default function TournamentTabs({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
-              <div className="grid md:grid-cols-2 gap-8">
-                {/* Upcoming Fixtures */}
-                <div>
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-2xl font-bold text-white">Upcoming Fixtures</h3>
-                    {isOrganiser && (
-                      <Button onClick={onAddMatch} size="sm" className="bg-yellow-500 hover:bg-yellow-600 text-black">
-                        <Plus className="w-4 h-4" />
-                      </Button>
-                    )}
-                  </div>
-                  <div className="space-y-4">
-                    {fixtures.map((match) => (
-                      <motion.div
-                        key={match.id}
-                        whileHover={{ scale: 1.02 }}
-                        className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4"
-                      >
-                        <div className="flex justify-between items-center mb-3">
-                          <span className="text-yellow-500 font-bold">{match.time}</span>
-                          <span className="text-gray-400 text-sm">{match.pitch}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <TeamChip name={match.homeTeam.name} initials={match.homeTeam.initials} size="sm" />
-                          <span className="text-white font-bold mx-4">VS</span>
-                          <TeamChip name={match.awayTeam.name} initials={match.awayTeam.initials} size="sm" />
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Recent Results */}
-                <div>
-                  <h3 className="text-2xl font-bold text-white mb-6">Recent Results</h3>
-                  <div className="space-y-4">
-                    {results.map((match) => (
+              <div className="space-y-8">
+                {/* Recent Results - Show First */}
+                {results && results.length > 0 && (
+                  <div>
+                    <h3 className="text-2xl font-bold text-white mb-6">Recent Results</h3>
+                    <div className="space-y-4">
+                      {results.map((match) => (
                       <motion.div
                         key={match.id}
                         whileHover={{ scale: 1.02 }}
@@ -443,6 +415,47 @@ export default function TournamentTabs({
                     ))}
                   </div>
                 </div>
+                )}
+
+                {/* Upcoming Fixtures - Show Second */}
+                {fixtures && fixtures.length > 0 && (
+                  <div>
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-2xl font-bold text-white">Upcoming Fixtures</h3>
+                      {isOrganiser && (
+                        <Button onClick={onAddMatch} size="sm" className="bg-yellow-500 hover:bg-yellow-600 text-black">
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="space-y-4">
+                      {fixtures.map((match) => (
+                        <motion.div
+                          key={match.id}
+                          whileHover={{ scale: 1.02 }}
+                          className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4"
+                        >
+                          <div className="flex justify-between items-center mb-3">
+                            <span className="text-yellow-500 font-bold">{match.time}</span>
+                            <span className="text-gray-400 text-sm">{match.pitch}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <TeamChip name={match.homeTeam.name} initials={match.homeTeam.initials} size="sm" />
+                            <span className="text-white font-bold mx-4">VS</span>
+                            <TeamChip name={match.awayTeam.name} initials={match.awayTeam.initials} size="sm" />
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Show message if no fixtures or results */}
+                {(!results || results.length === 0) && (!fixtures || fixtures.length === 0) && (
+                  <div className="text-center py-12 bg-zinc-800/30 border border-zinc-700 rounded-lg">
+                    <p className="text-gray-400 text-lg">No fixtures or results available yet.</p>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -455,6 +468,60 @@ export default function TournamentTabs({
             >
               <h3 className="text-2xl font-bold text-white mb-6">Standings</h3>
               
+              {/* Sub-tabs for combination format: Group and Knockouts */}
+              {tournamentFormat === 'combination' && (() => {
+                const allMatches = [...(fixtures || []), ...(results || [])];
+                const hasKnockoutMatches = allMatches.some(m => m.pitch && !m.pitch.includes('Group'));
+                const hasUnfinishedGroupMatches = allMatches.some(m => 
+                  m.pitch && m.pitch.includes('Group') && (m.status === 'upcoming' || m.status === 'live')
+                );
+                
+                // Determine which tab should be active by default
+                const defaultTab = hasKnockoutMatches && !hasUnfinishedGroupMatches ? 'knockouts' : 'group';
+                
+                // Initialize activeStandingsTab if not set
+                if (activeStandingsTab === 'group' && defaultTab === 'knockouts' && hasKnockoutMatches) {
+                  // Auto-switch to knockouts if group stage is complete
+                }
+                
+                return (
+                  <>
+                    <div className="flex gap-2 mb-6 border-b border-zinc-700">
+                      <button
+                        onClick={() => setActiveStandingsTab('group')}
+                        className={`px-4 py-2 font-medium transition-colors ${
+                          activeStandingsTab === 'group'
+                            ? 'text-yellow-500 border-b-2 border-yellow-500'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        Group Stage
+                      </button>
+                      {hasKnockoutMatches && (
+                        <button
+                          onClick={() => setActiveStandingsTab('knockouts')}
+                          className={`px-4 py-2 font-medium transition-colors ${
+                            activeStandingsTab === 'knockouts'
+                              ? 'text-yellow-500 border-b-2 border-yellow-500'
+                              : 'text-gray-400 hover:text-white'
+                          }`}
+                        >
+                          Knockouts
+                        </button>
+                      )}
+                    </div>
+                    
+                    {activeStandingsTab === 'group' && standingsData?.format === 'groups' && (
+                      <GroupStandings groups={(standingsData as GroupStandingsData).groups} />
+                    )}
+                    
+                    {activeStandingsTab === 'knockouts' && hasKnockoutMatches && (
+                      <KnockoutBracket matches={allMatches} />
+                    )}
+                  </>
+                );
+              })()}
+              
               {/* Knockout format - show bracket visualization */}
               {tournamentFormat === 'knockout' && (
                 <KnockoutBracket 
@@ -462,8 +529,8 @@ export default function TournamentTabs({
                 />
               )}
               
-              {/* NEW: Group-based standings (combinationB) */}
-              {tournamentFormat !== 'knockout' && standingsData?.format === 'groups' && (
+              {/* NEW: Group-based standings (combinationB) - fallback for non-combination formats */}
+              {tournamentFormat !== 'knockout' && tournamentFormat !== 'combination' && standingsData?.format === 'groups' && (
                 <GroupStandings groups={(standingsData as GroupStandingsData).groups} />
               )}
               

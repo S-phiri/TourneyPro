@@ -326,7 +326,10 @@ export async function markRegistrationPaid(registrationId: number) {
 // NEW: Seed test teams for tournament (organizer only)
 export async function seedTestTeams(tournamentId: number, options?: { teams?: number; paid?: boolean; players?: number; simulate_games?: boolean }) {
   const token = getAuthToken();
-  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  const headers: HeadersInit = { 
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -342,8 +345,21 @@ export async function seedTestTeams(tournamentId: number, options?: { teams?: nu
     }),
   });
   if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || 'Failed to seed test teams');
+    // Check if response is JSON before parsing
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      try {
+        const error = await res.json();
+        throw new Error(error.detail || error.message || 'Failed to seed test teams');
+      } catch (e) {
+        if (e instanceof Error) throw e;
+        throw new Error(`Failed to seed test teams: ${res.status} ${res.statusText}`);
+      }
+    } else {
+      // HTML error page or other non-JSON response
+      const text = await res.text();
+      throw new Error(`Failed to seed test teams: ${res.status} ${res.statusText}. ${text.substring(0, 100)}`);
+    }
   }
   return res.json();
 }

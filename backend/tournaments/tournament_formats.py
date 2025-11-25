@@ -283,18 +283,17 @@ def generate_combination_fixtures(
         matches.extend(knockout_matches)
         
     elif combination_type == "combinationB":
-        # Champions League format: Groups → Knockout
-        # Group stage: teams divided into groups, play round-robin (home & away)
+        # World Cup format: Groups → Knockout
+        # Group stage: teams divided into groups, play single round-robin (each team plays each other once)
         # Only generate GROUP STAGE matches here (not knockout - those are created after group stage)
         groups = generate_groups(teams, "combinationB")
         
-        # Champions League format: Each team plays 6 matches in 6 rounds (for 4-team groups)
-        # Round 1-6: Each round has one match per team
-        # For 4 teams in a group: Round 1 = 2 matches, Round 2 = 2 matches, etc.
+        # World Cup format: Each team plays (group_size - 1) matches (single round-robin)
+        # For 4 teams in a group: 3 rounds, each team plays 3 matches
         group_size = len(groups[0]["teams"]) if groups else 4
-        num_rounds = (group_size - 1) * 2  # Home and away for each pairing
+        num_rounds = group_size - 1  # Single round-robin: each team plays (n-1) matches
         
-        # Generate matches round by round (like Champions League)
+        # Generate matches round by round (World Cup style - single round-robin)
         for round_num in range(1, num_rounds + 1):
             round_date = start_date + timedelta(days=round_num - 1)
             
@@ -303,8 +302,7 @@ def generate_combination_fixtures(
                 group_teams = group["teams"]
                 group_name = group["name"]
                 
-                # Rotate teams to ensure each round has different pairings
-                # This is a simplified rotation - for true Champions League, use specific pairings
+                # Single round-robin pairings for each round
                 if round_num == 1:
                     # Round 1: Team 1 vs Team 2, Team 3 vs Team 4
                     pairings = [
@@ -323,27 +321,10 @@ def generate_combination_fixtures(
                         (group_teams[0], group_teams[3]) if len(group_teams) >= 4 else None,
                         (group_teams[1], group_teams[2])
                     ]
-                elif round_num == 4:
-                    # Round 4: Reverse of Round 1 (away/home)
-                    pairings = [
-                        (group_teams[1], group_teams[0]),
-                        (group_teams[3], group_teams[2]) if len(group_teams) >= 4 else None
-                    ]
-                elif round_num == 5:
-                    # Round 5: Reverse of Round 2
-                    pairings = [
-                        (group_teams[2], group_teams[0]),
-                        (group_teams[3], group_teams[1]) if len(group_teams) >= 4 else None
-                    ]
-                elif round_num == 6:
-                    # Round 6: Reverse of Round 3
-                    pairings = [
-                        (group_teams[3], group_teams[0]) if len(group_teams) >= 4 else None,
-                        (group_teams[2], group_teams[1])
-                    ]
                 else:
-                    # For groups with more/less teams, use rotation
+                    # For groups with more/less teams, use rotation algorithm
                     pairings = []
+                    # Simple rotation: pair teams that haven't played yet
                     for i in range(0, len(group_teams) - 1, 2):
                         if i + 1 < len(group_teams):
                             pairings.append((group_teams[i], group_teams[i + 1]))
@@ -462,8 +443,8 @@ def calculate_group_standings(teams: List[Team], matches: List[Match], group_nam
     Calculate standings for a specific group (for combinationB format)
     Returns sorted list of team standings dicts
     """
-    # Filter matches for this group (stored in pitch field)
-    group_matches = [m for m in matches if m.pitch == group_name and m.status == 'finished']
+    # Filter matches for this group (pitch field format: "Group A - Round 1", "Group A - Round 2", etc.)
+    group_matches = [m for m in matches if m.pitch and m.pitch.startswith(group_name) and m.status == 'finished']
     
     # Initialize standings for each team
     standings = {}
