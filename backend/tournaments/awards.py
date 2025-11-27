@@ -30,9 +30,15 @@ def get_top_scorer(tournament):
     player_id = top_scorer_data['player_id']
     
     # Get player's team in this tournament
+    # Teams are related to tournaments through Registration
+    team_ids = Team.objects.filter(
+        registrations__tournament=tournament,
+        registrations__status__in=['pending', 'paid']
+    ).values_list('id', flat=True)
+    
     team_player = TeamPlayer.objects.filter(
         player_id=player_id,
-        team__tournament=tournament
+        team_id__in=team_ids
     ).select_related('team').first()
     
     return {
@@ -107,9 +113,15 @@ def get_mvp(tournament):
     player = Player.objects.get(id=top_mvp['player_id'])
     
     # Get player's team in this tournament
+    # Teams are related to tournaments through Registration
+    team_ids = Team.objects.filter(
+        registrations__tournament=tournament,
+        registrations__status__in=['pending', 'paid']
+    ).values_list('id', flat=True)
+    
     team_player = TeamPlayer.objects.filter(
         player_id=top_mvp['player_id'],
-        team__tournament=tournament
+        team_id__in=team_ids
     ).select_related('team').first()
     
     return {
@@ -200,11 +212,19 @@ def get_tournament_winner(tournament):
                 }
     
     elif tournament.format == 'knockout':
-        # Find the final match (last match in knockout bracket)
+        # Find the final match (match with pitch containing "Final")
         final_match = Match.objects.filter(
             tournament=tournament,
-            status='finished'
+            status='finished',
+            pitch__icontains='final'
         ).order_by('-kickoff_at').first()
+        
+        # If not found by pitch, try to find the last match
+        if not final_match:
+            final_match = Match.objects.filter(
+                tournament=tournament,
+                status='finished'
+            ).order_by('-kickoff_at').first()
         
         if final_match and final_match.home_score is not None and final_match.away_score is not None:
             # Determine winner
@@ -213,17 +233,27 @@ def get_tournament_winner(tournament):
             elif final_match.away_score > final_match.home_score:
                 winner_team = final_match.away_team
             else:
-                # Draw - check for penalties or extra time (if implemented)
-                # For now, return None if draw
-                return None
+                # Draw - check for penalties
+                if final_match.home_penalties is not None and final_match.away_penalties is not None:
+                    if final_match.home_penalties > final_match.away_penalties:
+                        winner_team = final_match.home_team
+                    elif final_match.away_penalties > final_match.home_penalties:
+                        winner_team = final_match.away_team
+                    else:
+                        # Even penalties are tied (shouldn't happen, but handle gracefully)
+                        return None
+                else:
+                    # Draw without penalties - return None
+                    return None
             
-            return {
-                'team': {
-                    'id': winner_team.id,
-                    'name': winner_team.name
-                },
-                'position': 1
-            }
+            if winner_team:
+                return {
+                    'team': {
+                        'id': winner_team.id,
+                        'name': winner_team.name
+                    },
+                    'position': 1
+                }
     
     elif tournament.format == 'combination':
         # For combination, find the final match of knockout stage
@@ -247,15 +277,27 @@ def get_tournament_winner(tournament):
             elif final_match.away_score > final_match.home_score:
                 winner_team = final_match.away_team
             else:
-                return None
+                # Draw - check for penalties
+                if final_match.home_penalties is not None and final_match.away_penalties is not None:
+                    if final_match.home_penalties > final_match.away_penalties:
+                        winner_team = final_match.home_team
+                    elif final_match.away_penalties > final_match.home_penalties:
+                        winner_team = final_match.away_team
+                    else:
+                        # Even penalties are tied (shouldn't happen, but handle gracefully)
+                        return None
+                else:
+                    # Draw without penalties - return None
+                    return None
             
-            return {
-                'team': {
-                    'id': winner_team.id,
-                    'name': winner_team.name
-                },
-                'position': 1
-            }
+            if winner_team:
+                return {
+                    'team': {
+                        'id': winner_team.id,
+                        'name': winner_team.name
+                    },
+                    'position': 1
+                }
     
     return None
 
@@ -331,8 +373,16 @@ def get_tournament_runner_up(tournament):
         # Find the final match and return the loser
         final_match = Match.objects.filter(
             tournament=tournament,
-            status='finished'
+            status='finished',
+            pitch__icontains='final'
         ).order_by('-kickoff_at').first()
+        
+        # If not found by pitch, try to find the last match
+        if not final_match:
+            final_match = Match.objects.filter(
+                tournament=tournament,
+                status='finished'
+            ).order_by('-kickoff_at').first()
         
         if final_match and final_match.home_score is not None and final_match.away_score is not None:
             if final_match.home_score > final_match.away_score:
@@ -340,15 +390,27 @@ def get_tournament_runner_up(tournament):
             elif final_match.away_score > final_match.home_score:
                 runner_up_team = final_match.home_team
             else:
-                return None
+                # Draw - check for penalties
+                if final_match.home_penalties is not None and final_match.away_penalties is not None:
+                    if final_match.home_penalties > final_match.away_penalties:
+                        runner_up_team = final_match.away_team
+                    elif final_match.away_penalties > final_match.home_penalties:
+                        runner_up_team = final_match.home_team
+                    else:
+                        # Even penalties are tied (shouldn't happen, but handle gracefully)
+                        return None
+                else:
+                    # Draw without penalties - return None
+                    return None
             
-            return {
-                'team': {
-                    'id': runner_up_team.id,
-                    'name': runner_up_team.name
-                },
-                'position': 2
-            }
+            if runner_up_team:
+                return {
+                    'team': {
+                        'id': runner_up_team.id,
+                        'name': runner_up_team.name
+                    },
+                    'position': 2
+                }
     
     elif tournament.format == 'combination':
         final_match = Match.objects.filter(
@@ -369,15 +431,27 @@ def get_tournament_runner_up(tournament):
             elif final_match.away_score > final_match.home_score:
                 runner_up_team = final_match.home_team
             else:
-                return None
+                # Draw - check for penalties
+                if final_match.home_penalties is not None and final_match.away_penalties is not None:
+                    if final_match.home_penalties > final_match.away_penalties:
+                        runner_up_team = final_match.away_team
+                    elif final_match.away_penalties > final_match.home_penalties:
+                        runner_up_team = final_match.home_team
+                    else:
+                        # Even penalties are tied (shouldn't happen, but handle gracefully)
+                        return None
+                else:
+                    # Draw without penalties - return None
+                    return None
             
-            return {
-                'team': {
-                    'id': runner_up_team.id,
-                    'name': runner_up_team.name
-                },
-                'position': 2
-            }
+            if runner_up_team:
+                return {
+                    'team': {
+                        'id': runner_up_team.id,
+                        'name': runner_up_team.name
+                    },
+                    'position': 2
+                }
     
     return None
 
@@ -478,7 +552,12 @@ def get_tournament_third_place(tournament):
         else:
             # Fall back to standings if available
             from .tournament_formats import calculate_group_standings, generate_groups
-            groups = generate_groups(list(Team.objects.filter(tournament=tournament)), tournament.format)
+            # Teams are related to tournaments through Registration
+            teams = list(Team.objects.filter(
+                registrations__tournament=tournament,
+                registrations__status__in=['pending', 'paid']
+            ).distinct())
+            groups = generate_groups(teams, tournament.format)
             # This is complex for combination, return None for now
             return None
     

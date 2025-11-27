@@ -29,7 +29,10 @@ interface UpdateScoreModalProps {
   homeTeam: { id: number; name: string };
   awayTeam: { id: number; name: string };
   currentScores: { home: number; away: number };
-  onSave: (scores: { home: number; away: number }, scorers: { home: number[]; away: number[] }, assists: { home: (number | null)[]; away: (number | null)[] }) => Promise<void>;
+  onSave: (scores: { home: number; away: number }, scorers: { home: number[]; away: number[] }, assists: { home: (number | null)[]; away: (number | null)[] }, penalties?: { home: number | null; away: number | null }) => Promise<void>;
+  isKnockout?: boolean; // NEW: Whether this is a knockout match
+  matchStatus?: string; // NEW: Current match status (scheduled, live, finished)
+  onStartMatch?: () => Promise<void>; // NEW: Callback to start the match
 }
 
 // NEW: Goal event with assist
@@ -48,7 +51,10 @@ export default function UpdateScoreModal({
   homeTeam,
   awayTeam,
   currentScores,
-  onSave
+  onSave,
+  isKnockout = false,
+  matchStatus = 'scheduled',
+  onStartMatch
 }: UpdateScoreModalProps) {
   const [homePlayers, setHomePlayers] = useState<TeamPlayer[]>([]);
   const [awayPlayers, setAwayPlayers] = useState<TeamPlayer[]>([]);
@@ -59,6 +65,13 @@ export default function UpdateScoreModal({
   const [awayGoals, setAwayGoals] = useState<GoalEvent[]>([]);
   const [openAssistDropdown, setOpenAssistDropdown] = useState<string | null>(null); // goalId
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // NEW: Penalty scores
+  const [homePenalties, setHomePenalties] = useState<number | null>(null);
+  const [awayPenalties, setAwayPenalties] = useState<number | null>(null);
+  // NEW: Match timer
+  const [matchStarted, setMatchStarted] = useState(matchStatus === 'live');
+  const [matchTime, setMatchTime] = useState(0); // minutes
+  const [timerInterval, setTimerInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -74,13 +87,37 @@ export default function UpdateScoreModal({
   useEffect(() => {
     if (isOpen) {
       fetchPlayers();
+      setMatchStarted(matchStatus === 'live');
+      setHomePenalties(null);
+      setAwayPenalties(null);
     } else {
       // Reset state when modal closes
       setHomeGoals([]);
       setAwayGoals([]);
       setOpenAssistDropdown(null);
+      setHomePenalties(null);
+      setAwayPenalties(null);
+      setMatchTime(0);
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        setTimerInterval(null);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, matchStatus]);
+
+  // Timer effect - update every second for better UX
+  useEffect(() => {
+    if (matchStarted) {
+      const interval = setInterval(() => {
+        setMatchTime(prev => prev + 1);
+      }, 1000); // Update every second
+      setTimerInterval(interval);
+      return () => clearInterval(interval);
+    } else if (timerInterval) {
+      clearInterval(timerInterval);
+      setTimerInterval(null);
+    }
+  }, [matchStarted]);
 
   const fetchPlayers = async () => {
     setLoading(true);
@@ -156,7 +193,31 @@ export default function UpdateScoreModal({
     });
   };
 
+  const handleStartMatch = async () => {
+    if (onStartMatch) {
+      try {
+        await onStartMatch();
+        setMatchStarted(true);
+      } catch (err) {
+        console.error('Failed to start match:', err);
+      }
+    }
+  };
+
   const handleSave = async () => {
+    // Check if knockout match ends in draw - require penalties
+    const isDraw = homeGoals.length === awayGoals.length;
+    if (isKnockout && isDraw) {
+      if (homePenalties === null || awayPenalties === null) {
+        alert('Knockout matches cannot end in a draw. Please provide penalty scores.');
+        return;
+      }
+      if (homePenalties === awayPenalties) {
+        alert('Penalty scores cannot be equal. One team must win.');
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       // Convert goals to arrays: one scorer ID per goal, one assister ID (or null) per goal
@@ -168,11 +229,25 @@ export default function UpdateScoreModal({
       await onSave(
         { home: homeGoals.length, away: awayGoals.length },
         { home: homeScorers, away: awayScorers },
-        { home: homeAssists, away: awayAssists } // NEW: Pass assists
+        { home: homeAssists, away: awayAssists },
+        isKnockout && isDraw ? { home: homePenalties, away: awayPenalties } : undefined
       );
       onClose();
-    } catch (err) {
+    } catch (err: any) {
+      // Check if error requires penalties
+      if (err.message && err.message.includes('penalties')) {
+        try {
+          const errorData = JSON.parse(err.message);
+          if (errorData.requires_penalties) {
+            // Don't close modal, just show that penalties are needed
+            return;
+          }
+        } catch {
+          // Not JSON, continue with normal error
+        }
+      }
       console.error('Failed to save scores:', err);
+      alert(err.message || 'Failed to save scores');
     } finally {
       setSaving(false);
     }
@@ -391,6 +466,88 @@ export default function UpdateScoreModal({
                   {awayPlayers.length === 0 && (
                     <p className="text-gray-500 text-sm text-center py-2">No players available</p>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Match Start Button & Timer */}
+          {!matchStarted && matchStatus === 'scheduled' && onStartMatch && (
+            <div className="mb-6 p-4 bg-zinc-800/50 border border-zinc-700 rounded-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-white mb-1">Match Not Started</h3>
+                  <p className="text-sm text-gray-400">Start the match to begin tracking time</p>
+                </div>
+                <button
+                  onClick={handleStartMatch}
+                  disabled={saving}
+                  className="px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5 disabled:opacity-50 flex items-center gap-2"
+                >
+                  <Plus className="w-5 h-5" />
+                  Start Match
+                </button>
+              </div>
+            </div>
+          )}
+
+          {matchStarted && (
+            <div className="mb-6 p-4 bg-zinc-800/50 border border-zinc-700 rounded-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-green-400 mb-1">Match Live</h3>
+                  <p className="text-sm text-gray-400">
+                    Duration: {Math.floor(matchTime / 60)}:{(matchTime % 60).toString().padStart(2, '0')}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                  <span className="text-red-400 text-sm font-semibold">LIVE</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Penalty Shootout Section (for knockout matches that end in draw) */}
+          {isKnockout && homeGoals.length === awayGoals.length && (
+            <div className="mb-6 p-6 bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 border-2 border-yellow-500/30 rounded-xl">
+              <h3 className="text-xl font-bold text-yellow-400 mb-4 flex items-center gap-2">
+                <span>⚽</span>
+                Penalty Shootout Required
+              </h3>
+              <p className="text-sm text-gray-300 mb-4">
+                This knockout match ended in a draw. Please enter penalty shootout scores.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    {homeTeam.name} Penalties
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    value={homePenalties ?? ''}
+                    onChange={(e) => setHomePenalties(e.target.value ? parseInt(e.target.value) : null)}
+                    className="w-full px-4 py-3 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-2xl font-bold text-center focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                    placeholder="0"
+                    disabled={saving}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    {awayTeam.name} Penalties
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="20"
+                    value={awayPenalties ?? ''}
+                    onChange={(e) => setAwayPenalties(e.target.value ? parseInt(e.target.value) : null)}
+                    className="w-full px-4 py-3 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-2xl font-bold text-center focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                    placeholder="0"
+                    disabled={saving}
+                  />
                 </div>
               </div>
             </div>

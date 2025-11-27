@@ -484,6 +484,48 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=True, methods=['post'], url_path='remove-last-team', permission_classes=[IsAuthenticated, IsTournamentOrganiser])
+    def remove_last_team(self, request, pk=None):
+        """Remove the most recently registered team from tournament (organiser only, for testing)"""
+        tournament = self.get_object()
+        
+        # Check permission
+        if not request.user.is_authenticated or tournament.organizer_id != request.user.id:
+            return Response(
+                {'detail': 'Only the tournament organiser can remove teams'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get the most recent registration
+        last_registration = tournament.registrations.filter(
+            status__in=['pending', 'paid']
+        ).order_by('-created_at').first()
+        
+        if not last_registration:
+            return Response(
+                {'detail': 'No teams to remove'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        team_name = last_registration.team.name
+        registration_id = last_registration.id
+        
+        # Delete the registration (team itself is not deleted, just the registration)
+        last_registration.delete()
+        
+        # Get remaining team count
+        remaining_count = tournament.registrations.filter(
+            status__in=['pending', 'paid']
+        ).count()
+        
+        return Response({
+            'detail': f'Removed team "{team_name}"',
+            'team_removed': team_name,
+            'registration_id': registration_id,
+            'remaining_teams': remaining_count,
+            'tournament_id': tournament.id
+        }, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'], url_path='simulate-round', permission_classes=[IsAuthenticated, IsTournamentOrganiser])
     def simulate_round(self, request, pk=None):
         """Simulate one round of matches for tournament (organiser only)"""
@@ -513,6 +555,90 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 {'detail': f'Error simulating round: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=['get'], url_path='debug-knockout', permission_classes=[IsAuthenticated, IsTournamentOrganiser])
+    def debug_knockout(self, request, pk=None):
+        """Debug endpoint to check knockout round generation state"""
+        tournament = self.get_object()
+        from .models import Match
+        
+        # Get all knockout matches (exclude group stage)
+        knockout_matches = Match.objects.filter(
+            tournament=tournament
+        ).exclude(pitch__icontains='Group').order_by('pitch', 'kickoff_at')
+        
+        # Group by round name
+        rounds = {}
+        for match in knockout_matches:
+            round_name = match.pitch or 'Unknown'
+            if round_name not in rounds:
+                rounds[round_name] = {
+                    'total': 0,
+                    'finished': 0,
+                    'scheduled': 0,
+                    'live': 0,
+                    'matches': []
+                }
+            rounds[round_name]['total'] += 1
+            rounds[round_name]['matches'].append({
+                'id': match.id,
+                'home': match.home_team.name if match.home_team else 'TBC',
+                'away': match.away_team.name if match.away_team else 'TBC',
+                'score': f"{match.home_score}-{match.away_score}",
+                'penalties': f"{match.home_penalties}-{match.away_penalties}" if match.home_penalties is not None else None,
+                'status': match.status
+            })
+            if match.status == 'finished':
+                rounds[round_name]['finished'] += 1
+            elif match.status == 'scheduled':
+                rounds[round_name]['scheduled'] += 1
+            elif match.status == 'live':
+                rounds[round_name]['live'] += 1
+        
+        # Check if semi-finals are complete and if final should be generated
+        semi_finals = rounds.get('Semi-Finals', {})
+        final = rounds.get('Final', {})
+        
+        # Try to manually trigger final generation if conditions are met
+        should_generate = (
+            'Semi-Finals' in rounds and
+            semi_finals.get('finished', 0) == semi_finals.get('total', 0) and
+            semi_finals.get('total', 0) == 2 and
+            'Final' not in rounds
+        )
+        
+        generation_result = None
+        if should_generate:
+            try:
+                from .simulation_helpers import generate_next_knockout_round
+                generation_result = generate_next_knockout_round(tournament, 'Semi-Finals')
+            except Exception as e:
+                import traceback
+                generation_result = {'error': str(e), 'traceback': traceback.format_exc()}
+        
+        debug_info = {
+            'tournament_id': tournament.id,
+            'tournament_name': tournament.name,
+            'format': tournament.format,
+            'rounds': rounds,
+            'semi_finals_status': {
+                'exists': 'Semi-Finals' in rounds,
+                'total_matches': semi_finals.get('total', 0),
+                'finished_matches': semi_finals.get('finished', 0),
+                'all_finished': semi_finals.get('finished', 0) == semi_finals.get('total', 0) and semi_finals.get('total', 0) > 0,
+                'matches': semi_finals.get('matches', [])
+            },
+            'final_status': {
+                'exists': 'Final' in rounds,
+                'total_matches': final.get('total', 0),
+                'matches': final.get('matches', [])
+            },
+            'should_generate_final': should_generate,
+            'generation_attempted': should_generate,
+            'generation_result': generation_result
+        }
+        
+        return Response(debug_info, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='clear-fixtures', permission_classes=[IsAuthenticated, IsTournamentOrganiser])
     def clear_fixtures(self, request, pk=None):
@@ -788,16 +914,14 @@ class MatchViewSet(viewsets.ModelViewSet):
         match.save()
         
         # Auto-generate next knockout round if applicable
-        if tournament.format == 'knockout' and match.pitch:
-            # Extract round number from pitch
-            import re
-            round_match = re.search(r'Round\s+(\d+)', match.pitch, re.IGNORECASE)
-            if round_match:
-                completed_round = int(round_match.group(1))
+        if (tournament.format == 'knockout' or 
+            (tournament.format == 'combination' and match.pitch and 'Group' not in match.pitch)):
+            if match.pitch:
                 try:
-                    generate_next_knockout_round(tournament, completed_round)
-                except:
-                    pass  # Don't fail if next round generation fails
+                    generate_next_knockout_round(tournament, match.pitch)
+                except Exception as e:
+                    print(f"Error generating next knockout round: {str(e)}")
+                    # Don't fail if next round generation fails
         
         return Response({
             'detail': 'Match ended',
@@ -813,6 +937,13 @@ class MatchViewSet(viewsets.ModelViewSet):
         try:
             hs = int(request.data.get('home_score', 0))
             as_ = int(request.data.get('away_score', 0))
+            # NEW: Penalty scores (for knockout matches)
+            home_penalties = request.data.get('home_penalties')
+            away_penalties = request.data.get('away_penalties')
+            if home_penalties is not None:
+                home_penalties = int(home_penalties)
+            if away_penalties is not None:
+                away_penalties = int(away_penalties)
             # NEW: Support assists - arrays of player IDs (one per goal)
             home_scorers = request.data.get('home_scorers', [])  # List of player IDs (one per goal)
             away_scorers = request.data.get('away_scorers', [])  # List of player IDs (one per goal)
@@ -820,6 +951,29 @@ class MatchViewSet(viewsets.ModelViewSet):
             away_assists = request.data.get('away_assists', [])  # NEW: List of assister IDs or null (one per goal)
         except (TypeError, ValueError):
             return Response({'detail': 'Invalid score'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if this is a knockout match
+        is_knockout = False
+        if match.tournament.format == 'knockout':
+            is_knockout = True
+        elif match.tournament.format == 'combination':
+            # Check if pitch indicates knockout stage (not group stage)
+            if match.pitch and 'Group' not in match.pitch:
+                is_knockout = True
+        
+        # If knockout match ends in draw, require penalties
+        if is_knockout and hs == as_:
+            if home_penalties is None or away_penalties is None:
+                return Response({
+                    'detail': 'Knockout matches cannot end in a draw. Please provide penalty scores.',
+                    'requires_penalties': True
+                }, status=status.HTTP_400_BAD_REQUEST)
+            # Ensure there's a winner
+            if home_penalties == away_penalties:
+                return Response({
+                    'detail': 'Penalty scores cannot be equal. One team must win.',
+                    'requires_penalties': True
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         with transaction.atomic():
             # Clear existing scorers and assists for this match
@@ -829,6 +983,15 @@ class MatchViewSet(viewsets.ModelViewSet):
             # Update match score
             match.home_score = max(0, hs)
             match.away_score = max(0, as_)
+            
+            # Clear penalties for non-draws or non-knockout matches
+            if is_knockout and hs == as_:
+                match.home_penalties = home_penalties
+                match.away_penalties = away_penalties
+            else:
+                match.home_penalties = None
+                match.away_penalties = None
+            
             match.status = 'finished'
             match.save()
             
@@ -954,7 +1117,92 @@ class MatchViewSet(viewsets.ModelViewSet):
                 except Player.DoesNotExist:
                     continue
         
-        return Response(self.get_serializer(match).data)
+        # Store info for post-transaction next round generation
+        should_generate_next_round = False
+        round_name_for_generation = None
+        tournament_for_generation = None
+        
+        if match.status == 'finished':
+            tournament_for_generation = match.tournament
+            if (tournament_for_generation.format == 'knockout' or 
+                (tournament_for_generation.format == 'combination' and match.pitch and 'Group' not in match.pitch)):
+                if match.pitch:
+                    should_generate_next_round = True
+                    round_name_for_generation = match.pitch.strip()
+        
+        response_data = self.get_serializer(match).data
+        
+        # Auto-generate next knockout round if applicable (AFTER transaction commits)
+        # This ensures the match is fully saved and visible to queries
+        if should_generate_next_round:
+            try:
+                from .simulation_helpers import generate_next_knockout_round
+                # Refresh match from DB to ensure we have latest committed state
+                match.refresh_from_db()
+                
+                print(f"\n{'='*60}")
+                print(f"SET_SCORE: Attempting to generate next round after finishing match")
+                print(f"  Match ID: {match.id}")
+                print(f"  Tournament: {tournament_for_generation.name} (ID: {tournament_for_generation.id})")
+                print(f"  Tournament Format: {tournament_for_generation.format}")
+                print(f"  Match Pitch: '{match.pitch}'")
+                print(f"  Round Name for Generation: '{round_name_for_generation}'")
+                print(f"  Match Status (after refresh): {match.status}")
+                print(f"  Match Score: {match.home_score}-{match.away_score}")
+                print(f"  Match Penalties: {match.home_penalties}-{match.away_penalties}")
+                print(f"  Is Knockout: {is_knockout}")
+                print(f"{'='*60}\n")
+                
+                result = generate_next_knockout_round(tournament_for_generation, round_name_for_generation)
+                if result:
+                    print(f"\n{'='*60}")
+                    print(f"✓ SUCCESS: Generated next round after '{round_name_for_generation}'")
+                    print(f"  Match ID: {match.id}, Tournament: {tournament_for_generation.name}")
+                    print(f"{'='*60}\n")
+                else:
+                    print(f"\n{'='*60}")
+                    print(f"✗ FAILED: Next round generation returned False for '{round_name_for_generation}'")
+                    print(f"  Match ID: {match.id}, Tournament: {tournament_for_generation.name}")
+                    print(f"  Check the logs above for detailed reasons")
+                    # Check if Final already exists when generation fails for Semi-Finals
+                    if round_name_for_generation.lower() in ['semi-finals', 'semi finals', 'semifinals']:
+                        from .models import Match
+                        existing_final = Match.objects.filter(
+                            tournament=tournament_for_generation
+                        ).exclude(pitch__icontains='Group').filter(
+                            pitch__icontains='final'
+                        )
+                        print(f"  DEBUG: Checking if Final already exists...")
+                        print(f"  Found {existing_final.count()} match(es) with pitch containing 'final':")
+                        for m in existing_final:
+                            print(f"    Match {m.id}: pitch='{m.pitch}', status={m.status}")
+                    print(f"{'='*60}\n")
+            except Exception as e:
+                import traceback
+                print(f"\n{'='*60}")
+                print(f"✗ EXCEPTION generating next knockout round after score update: {str(e)}")
+                print(traceback.format_exc())
+                print(f"{'='*60}\n")
+                # Don't fail if next round generation fails, but log the error
+        
+        # Check if tournament should be marked as completed
+        if match.status == 'finished':
+            from .models import Match
+            all_matches = Match.objects.filter(tournament=match.tournament)
+            all_finished = all_matches.filter(status='finished').count()
+            total_matches = all_matches.count()
+            
+            # If all matches are finished, mark tournament as completed
+            if total_matches > 0 and all_finished == total_matches:
+                if match.tournament.status != 'completed':
+                    match.tournament.status = 'completed'
+                    match.tournament.save()
+                    print(f"\n{'='*60}")
+                    print(f"✓ Tournament '{match.tournament.name}' marked as COMPLETED")
+                    print(f"  All {total_matches} matches finished")
+                    print(f"{'='*60}\n")
+        
+        return Response(response_data)
 
 class PlayerViewSet(viewsets.ModelViewSet):
     queryset = Player.objects.all()

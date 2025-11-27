@@ -50,3 +50,15 @@ export const createTeam = (payload: CreateTeamData): Promise<Team> =>
 
 export const createRegistration = (payload: CreateRegistrationData): Promise<Registration> => 
   api('/registrations/', { method: 'POST', body: JSON.stringify(payload) });
+
+export const deleteRegistration = (registrationId: number): Promise<void> => 
+  api(`/registrations/${registrationId}/`, { method: 'DELETE' });
+
+export const removeLastTeam = (tournamentId: number): Promise<{ detail: string; team_removed: string; remaining_teams: number }> => 
+  api(`/tournaments/${tournamentId}/remove-last-team/`, { method: 'POST' });
+
+export const addOneTestTeam = (tournamentId: number): Promise<any> => 
+  api(`/tournaments/${tournamentId}/seed-test-teams/`, { 
+    method: 'POST', 
+    body: JSON.stringify({ teams: 1, players: 0, paid: false, simulate_games: false })
+  });

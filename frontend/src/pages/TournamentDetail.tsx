@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
-import { api, getTournamentStandings, getTournamentTopScorers, getTournamentTopAssists, generateFixtures, seedTestTeams, simulateRound, clearFixtures } from '../lib/api';
+import { api, getTournamentStandings, getTournamentTopScorers, getTournamentTopAssists, generateFixtures, seedTestTeams, simulateRound, clearFixtures, debugKnockout } from '../lib/api';
 import { Tournament } from '../types/tournament';
 import { Match } from '../lib/matches';
 import { Registration } from '../lib/registrations';
-import { listRegistrations } from '../lib/registrations';
+import { listRegistrations, addOneTestTeam, removeLastTeam } from '../lib/registrations';
 import { listMatches } from '../lib/matches';
 import { formatDate, formatCurrency, parseCSV, parseSponsors } from '../lib/helpers';
 import { Trophy } from 'lucide-react';
@@ -64,7 +64,7 @@ const TournamentDetail: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   // NEW: Pull auth state to gate manager registration
-  const { isOrganizer, getTournamentRole, user, isAuthenticated, roleHint } = useAuth();
+  const { isOrganizer, getTournamentRole, user, isAuthenticated, roleHint, isLoading: authLoading } = useAuth();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
@@ -131,8 +131,12 @@ const TournamentDetail: React.FC = () => {
   };
 
   useEffect(() => {
+    // Wait for auth to finish loading before fetching tournament
+    // This ensures we have valid auth state before checking roles
+    if (!authLoading) {
     fetchTournament();
-  }, [id]);
+    }
+  }, [id, authLoading]);
 
   // Safe helpers
   const toStr = (v: any) => (v == null ? "" : String(v));
@@ -197,7 +201,8 @@ const TournamentDetail: React.FC = () => {
     }
   };
 
-  if (loading) {
+  // Show loading spinner while auth is loading or tournament is loading
+  if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
       <div className="container py-8">
@@ -278,33 +283,37 @@ const TournamentDetail: React.FC = () => {
       name: toStr(match?.away_team?.name),
       initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
     },
-    homeScore: match?.home_score ?? 0,
-    awayScore: match?.away_score ?? 0,
-    status: 'live' as const,
-    startedAt: match?.started_at,
-    durationMinutes: match?.duration_minutes,
-    scorers: match?.scorers || []
-  }));
+      homeScore: match?.home_score ?? 0,
+      awayScore: match?.away_score ?? 0,
+      homePenalties: match?.home_penalties ?? null,
+      awayPenalties: match?.away_penalties ?? null,
+      status: 'live' as const,
+      startedAt: match?.started_at,
+      durationMinutes: match?.duration_minutes,
+      scorers: match?.scorers || []
+    }));
 
   const results = arr(completedMatches)
     .map(match => ({
-      id: toStr(match?.id),
-      time: match?.kickoff_at ? new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'TBC',
-      pitch: toStr(match?.pitch) || 'TBA',
-      homeTeam: {
-        id: toStr(match?.home_team?.id),
-        name: toStr(match?.home_team?.name),
-        initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
-      },
-      awayTeam: {
-        id: toStr(match?.away_team?.id),
-        name: toStr(match?.away_team?.name),
-        initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
-      },
-      homeScore: match?.home_score ?? 0,
-      awayScore: match?.away_score ?? 0,
-      status: 'completed' as const,
-      // NEW: Include scorer and assist data
+    id: toStr(match?.id),
+    time: match?.kickoff_at ? new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'TBC',
+    pitch: toStr(match?.pitch) || 'TBA',
+    homeTeam: {
+      id: toStr(match?.home_team?.id),
+      name: toStr(match?.home_team?.name),
+      initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
+    },
+    awayTeam: {
+      id: toStr(match?.away_team?.id),
+      name: toStr(match?.away_team?.name),
+      initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
+    },
+    homeScore: match?.home_score ?? 0,
+    awayScore: match?.away_score ?? 0,
+      homePenalties: match?.home_penalties ?? null,
+      awayPenalties: match?.away_penalties ?? null,
+    status: 'completed' as const,
+    // NEW: Include scorer and assist data
       scorers: match?.scorers || [],
       kickoff_at: match?.kickoff_at // Keep original date for sorting
     }))
@@ -476,21 +485,23 @@ const TournamentDetail: React.FC = () => {
               {tournamentRole.is_organiser && (
                 <div className="w-full">
                   {/* Main Actions */}
-                  <div className="flex flex-wrap gap-3 mb-4">
-                    <button
-                      onClick={() => {
-                        navigate(`/tournaments/${id}/edit`);
-                      }}
-                      className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
-                    >
-                      Edit Tournament
-                    </button>
-                    {arr(registrations).length >= (Number(tournament.team_max) || 0) && upcomingMatches.length === 0 && (
+                  <div className="flex flex-wrap gap-2 sm:gap-3 mb-4">
+                  <button
+                    onClick={() => {
+                      navigate(`/tournaments/${id}/edit`);
+                    }}
+                    className="px-4 sm:px-5 py-2 sm:py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-xs sm:text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
+                  >
+                    Edit Tournament
+                  </button>
+                    {arr(registrations).length >= 2 && arr(matches).length === 0 && (
                       <button
                         onClick={async () => {
                           const format = tournament.format || 'league';
                           const formatName = format === 'knockout' ? 'Knockout' : format === 'combination' ? 'Combination' : 'League';
                           const numTeams = arr(registrations).length;
+                          const maxTeams = Number(tournament.team_max) || 0;
+                          const isFull = numTeams >= maxTeams;
                           
                           let expectedMatches = '';
                           if (format === 'knockout') {
@@ -499,12 +510,23 @@ const TournamentDetail: React.FC = () => {
                           } else if (format === 'league') {
                             const total = (numTeams * (numTeams - 1)) / 2;
                             expectedMatches = `Total: ${total} matches (everyone plays everyone)`;
+                          } else if (format === 'combination') {
+                            // Combination format: groups then knockout
+                            const numGroups = numTeams < 16 ? 2 : 4;
+                            expectedMatches = `Group stage: ${numGroups} groups, then knockout`;
                           }
                           
-                          const confirmMsg = `Generate fixtures for ${formatName} tournament?\n\n` +
-                            `Teams: ${numTeams}\n` +
-                            `${expectedMatches}\n\n` +
-                            (format === 'league' ? '⚠️ This will create a round-robin where every team plays every other team.\n' : '') +
+                          let confirmMsg = `Generate fixtures for ${formatName} tournament?\n\n` +
+                            `Teams: ${numTeams}${maxTeams > 0 ? ` / ${maxTeams}` : ''}\n` +
+                            `${expectedMatches}\n\n`;
+                          
+                          if (!isFull && maxTeams > 0) {
+                            confirmMsg += `⚠️ Tournament is not full (${numTeams}/${maxTeams} teams).\n` +
+                              `Fixtures will be generated with current teams only.\n` +
+                              `You can regenerate fixtures later if more teams register.\n\n`;
+                          }
+                          
+                          confirmMsg += (format === 'league' ? '⚠️ This will create a round-robin where every team plays every other team.\n' : '') +
                             `Continue?`;
                           
                           if (!window.confirm(confirmMsg)) {
@@ -519,17 +541,83 @@ const TournamentDetail: React.FC = () => {
                             alert(`Failed to generate fixtures: ${err.message || 'Unknown error'}`);
                           }
                         }}
-                        className="px-5 py-2.5 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
+                        className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
                       >
                         Generate Fixtures
                       </button>
                     )}
                     <button
                       onClick={handleManageFixtures}
-                      className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
+                      className="px-4 sm:px-5 py-2 sm:py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-xs sm:text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
                     >
                       Manage Fixtures
                     </button>
+                  </div>
+
+                  {/* Tournament Status Display */}
+                  <div className="w-full mt-6 pt-6 border-t-2 border-yellow-500/30 bg-zinc-900/30 rounded-lg p-4 mb-6">
+                    <h3 className="text-lg font-bold text-yellow-400 mb-3">Tournament Status</h3>
+                    <div className="flex items-center gap-3 mb-4">
+                      <span className={`px-4 py-2 rounded-lg font-bold text-sm ${
+                        tournament.status === 'completed' 
+                          ? 'bg-green-500/20 text-green-400 border border-green-500/50' 
+                          : tournament.status === 'open'
+                          ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50'
+                          : tournament.status === 'closed'
+                          ? 'bg-red-500/20 text-red-400 border border-red-500/50'
+                          : 'bg-gray-500/20 text-gray-400 border border-gray-500/50'
+                      }`}>
+                        {tournament.status === 'completed' ? '✓ Completed' : 
+                         tournament.status === 'open' ? '● Open' : 
+                         tournament.status === 'closed' ? '✗ Closed' : 
+                         'Draft'}
+                      </span>
+                      {tournament.status !== 'completed' && isOrganizer && (
+                        <button
+                          onClick={async () => {
+                            const allMatches = arr(matches);
+                            const finishedMatches = allMatches.filter((m: any) => m?.status === 'finished');
+                            const totalMatches = allMatches.length;
+                            
+                            if (totalMatches === 0) {
+                              alert('No matches found. Cannot mark as completed.');
+                              return;
+                            }
+                            
+                            if (finishedMatches.length < totalMatches) {
+                              const remaining = totalMatches - finishedMatches.length;
+                              if (!window.confirm(`Not all matches are finished (${remaining} remaining). Mark tournament as completed anyway?`)) {
+                                return;
+                              }
+                            }
+                            
+                            if (!window.confirm(`Mark tournament "${tournament.name}" as COMPLETED?\n\nThis will:\n- Show the Awards tab\n- Make awards visible to all users\n\nContinue?`)) {
+                              return;
+                            }
+                            
+                            try {
+                              await api(`/tournaments/${id}/`, {
+                                method: 'PATCH',
+                                body: JSON.stringify({ status: 'completed' })
+                              });
+                              alert('✓ Tournament marked as completed!');
+                              fetchTournament();
+                            } catch (err: any) {
+                              alert(`Failed to update status: ${err.message || 'Unknown error'}`);
+                            }
+                          }}
+                          className="px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-white rounded-lg text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
+                          title="Manually mark tournament as completed"
+                        >
+                          Mark as Completed
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-400">
+                      {tournament.status === 'completed' 
+                        ? 'Tournament is completed. Awards tab is visible.' 
+                        : `Status: ${tournament.status}. ${arr(matches).filter((m: any) => m?.status === 'finished').length} of ${arr(matches).length} matches finished.`}
+                    </p>
                   </div>
 
                   {/* Testing & Simulation Tools - Always Visible Section */}
@@ -538,72 +626,132 @@ const TournamentDetail: React.FC = () => {
                       <span>🧪</span>
                       Testing & Simulation Tools
                     </h3>
-                    <div className="flex flex-wrap gap-3">
-                      {availableSlots > 0 && (
+                    
+                    {/* Team Count Display */}
+                    <div className="mb-4 px-3 py-2 bg-zinc-800/50 rounded-lg border border-yellow-500/20">
+                      <p className="text-sm font-semibold text-yellow-400">
+                        Teams: <span className="text-white">{currentTeams}</span> / <span className="text-gray-400">{maxTeams}</span>
+                      </p>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-2 sm:gap-3">
+                      {/* Quick Team Management */}
+                      <div className="flex flex-wrap gap-2 items-center border-r-0 sm:border-r border-zinc-700 pr-0 sm:pr-3 mr-0 sm:mr-2 pb-2 sm:pb-0 border-b sm:border-b-0 border-zinc-700 w-full sm:w-auto">
                         <button
                           onClick={async () => {
-                            if (!window.confirm(`Create ${availableSlots} test teams to fill tournament capacity (${currentTeams}/${maxTeams})? This will create managers with password "test1234".`)) {
+                            if (availableSlots === 0) {
+                              alert(`Tournament is full (${currentTeams}/${maxTeams}). Cannot add more teams.`);
                               return;
                             }
                             try {
-                              const result = await seedTestTeams(parseInt(id!), { teams: availableSlots, paid: false, players: 0, simulate_games: false });
-                              let message = `✓ Successfully created ${result.teams_created} test teams with ${result.players_created} players!\n\n`;
-                              if (result.matches_created > 0) {
-                                message += `✓ Generated ${result.matches_created} fixtures\n`;
-                              }
-                              message += `\nManager passwords: test1234`;
-                              alert(message);
+                              const result = await addOneTestTeam(parseInt(id!));
+                              alert(`✓ Successfully added 1 test team!\n\nTeam: ${result.teams_created > 0 ? 'Created' : 'Added'}\nManager password: test1234`);
                               await new Promise(resolve => setTimeout(resolve, 500));
                               fetchTournament();
                             } catch (err: any) {
-                              alert(err.message || 'Failed to seed test teams');
+                              alert(err.message || 'Failed to add team');
                             }
                           }}
-                          className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
+                          disabled={availableSlots === 0}
+                          className="px-3 sm:px-4 py-2 text-xs sm:text-sm bg-gradient-to-r from-cyan-500 to-cyan-600 hover:from-cyan-600 hover:to-cyan-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white rounded-lg font-bold transition-all shadow-lg shadow-cyan-500/20 hover:-translate-y-0.5 flex-1 sm:flex-none"
+                          title={availableSlots === 0 ? 'Tournament is full' : 'Add 1 test team quickly'}
                         >
-                          Seed Test Teams ({availableSlots} slots)
+                          + Add 1 Team
                         </button>
-                      )}
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm(`Add 11-15 players to all teams that don't have players yet?`)) {
-                            return;
-                          }
-                          try {
-                            const result = await seedTestTeams(parseInt(id!), { teams: 0, paid: false, players: 0, simulate_games: false });
-                            if (result.error) {
-                              alert(result.error);
-                            } else {
-                              alert(`✓ Added ${result.players_created} players to existing teams!`);
+                        <button
+                          onClick={async () => {
+                            if (currentTeams === 0) {
+                              alert('No teams to remove.');
+                              return;
                             }
-                            fetchTournament();
-                          } catch (err: any) {
-                            alert(err.message || 'Failed to add players');
-                          }
-                        }}
-                        className="px-5 py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
-                        title="Add players to existing teams that don't have players"
-                      >
-                        Add Players to Teams
-                      </button>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const result = await simulateRound(parseInt(id!));
-                            if (result.round_number) {
-                              const stage = result.is_league_stage ? 'League Stage' : 'Knockout Stage';
-                              alert(`✓ ${result.message}\n\nRound ${result.round_number} (${stage}): ${result.matches_simulated} matches simulated`);
-                            } else {
-                              alert(result.message || 'No matches to simulate');
+                            if (!window.confirm(`Remove the most recently added team?\n\nThis will delete the team's registration.`)) {
+                              return;
                             }
-                            fetchTournament();
-                          } catch (err: any) {
-                            alert(err.message || 'Failed to simulate round');
+                            try {
+                              const result = await removeLastTeam(parseInt(id!));
+                              alert(`✓ Removed team "${result.team_removed}"\n\nRemaining teams: ${result.remaining_teams}`);
+                              await new Promise(resolve => setTimeout(resolve, 500));
+                              fetchTournament();
+                            } catch (err: any) {
+                              alert(err.message || 'Failed to remove team');
+                            }
+                          }}
+                          disabled={currentTeams === 0}
+                          className="px-3 sm:px-4 py-2 text-xs sm:text-sm bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white rounded-lg font-bold transition-all shadow-lg shadow-orange-500/20 hover:-translate-y-0.5 flex-1 sm:flex-none"
+                          title={currentTeams === 0 ? 'No teams to remove' : 'Remove the most recently added team'}
+                        >
+                          - Remove Last
+                        </button>
+                      </div>
+                      
+                      {availableSlots > 0 && (
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`Create ${availableSlots} test teams to fill tournament capacity (${currentTeams}/${maxTeams})? This will create managers with password "test1234".`)) {
+                          return;
+                        }
+                        try {
+                          const result = await seedTestTeams(parseInt(id!), { teams: availableSlots, paid: false, players: 0, simulate_games: false });
+                          let message = `✓ Successfully created ${result.teams_created} test teams with ${result.players_created} players!\n\n`;
+                          if (result.matches_created > 0) {
+                            message += `✓ Generated ${result.matches_created} fixtures\n`;
                           }
-                        }}
-                        className="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-blue-500/20 hover:-translate-y-0.5"
-                      >
-                        Simulate Round ({upcomingMatches.length || arr(matches).filter((m: any) => m?.status === 'scheduled').length || 0} matches remaining)
+                          message += `\nManager passwords: test1234`;
+                          alert(message);
+                              await new Promise(resolve => setTimeout(resolve, 500));
+                          fetchTournament();
+                        } catch (err: any) {
+                          alert(err.message || 'Failed to seed test teams');
+                        }
+                      }}
+                      className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
+                    >
+                      <span className="hidden sm:inline">Seed Test Teams ({availableSlots} slots)</span>
+                      <span className="sm:hidden">Seed Teams ({availableSlots})</span>
+                    </button>
+                  )}
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`Add 11-15 players to all teams that don't have players yet?`)) {
+                          return;
+                        }
+                        try {
+                          const result = await seedTestTeams(parseInt(id!), { teams: 0, paid: false, players: 0, simulate_games: false });
+                          if (result.error) {
+                            alert(result.error);
+                          } else {
+                            alert(`✓ Added ${result.players_created} players to existing teams!`);
+                          }
+                          fetchTournament();
+                        } catch (err: any) {
+                          alert(err.message || 'Failed to add players');
+                        }
+                      }}
+                      className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-green-500/20 hover:-translate-y-0.5"
+                      title="Add players to existing teams that don't have players"
+                    >
+                      <span className="hidden sm:inline">Add Players to Teams</span>
+                      <span className="sm:hidden">Add Players</span>
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const result = await simulateRound(parseInt(id!));
+                          if (result.round_number) {
+                            const stage = result.is_league_stage ? 'League Stage' : 'Knockout Stage';
+                            alert(`✓ ${result.message}\n\nRound ${result.round_number} (${stage}): ${result.matches_simulated} matches simulated`);
+                          } else {
+                            alert(result.message || 'No matches to simulate');
+                          }
+                          fetchTournament();
+                        } catch (err: any) {
+                          alert(err.message || 'Failed to simulate round');
+                        }
+                      }}
+                      className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-blue-500/20 hover:-translate-y-0.5"
+                    >
+                        <span className="hidden sm:inline">Simulate Round ({upcomingMatches.length || arr(matches).filter((m: any) => m?.status === 'scheduled').length || 0} matches remaining)</span>
+                        <span className="sm:hidden">Simulate ({upcomingMatches.length || arr(matches).filter((m: any) => m?.status === 'scheduled').length || 0})</span>
                       </button>
                       <button
                         onClick={async () => {
@@ -634,11 +782,49 @@ const TournamentDetail: React.FC = () => {
                           }
                         }}
                         disabled={arr(matches).length === 0}
-                        className="px-5 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-red-500/20 hover:-translate-y-0.5"
+                        className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-red-500/20 hover:-translate-y-0.5"
                         title={arr(matches).length === 0 ? 'No fixtures to clear' : 'Delete all matches/fixtures'}
                       >
-                        Clear Fixtures ({arr(matches).length || 0})
-                      </button>
+                        <span className="hidden sm:inline">Clear Fixtures ({arr(matches).length || 0})</span>
+                        <span className="sm:hidden">Clear ({arr(matches).length || 0})</span>
+                    </button>
+                  <button
+                        onClick={async () => {
+                          try {
+                            const result = await debugKnockout(parseInt(id!));
+                            const roundsList = result.rounds ? Object.keys(result.rounds).join(', ') : 'None';
+                            const generationResultStr = result.generation_result !== null && result.generation_result !== undefined
+                              ? (typeof result.generation_result === 'object' 
+                                  ? JSON.stringify(result.generation_result, null, 2) 
+                                  : String(result.generation_result))
+                              : 'N/A';
+                            const message = `Debug Info:\n\n` +
+                              `Tournament: ${result.tournament_name}\n` +
+                              `Format: ${result.format}\n\n` +
+                              `Rounds: ${roundsList}\n\n` +
+                              `Semi-Finals:\n` +
+                              `  - Exists: ${result.semi_finals_status.exists}\n` +
+                              `  - Total: ${result.semi_finals_status.total_matches}\n` +
+                              `  - Finished: ${result.semi_finals_status.finished_matches}\n` +
+                              `  - All Finished: ${result.semi_finals_status.all_finished}\n\n` +
+                              `Final:\n` +
+                              `  - Exists: ${result.final_status.exists}\n` +
+                              `  - Total: ${result.final_status.total_matches}\n\n` +
+                              `Should Generate: ${result.should_generate_final}\n` +
+                              `Generation Attempted: ${result.generation_attempted}\n` +
+                              `Generation Result: ${generationResultStr}`;
+                            alert(message);
+                            fetchTournament();
+                          } catch (err: any) {
+                            alert(`Debug failed: ${err.message || 'Unknown error'}`);
+                          }
+                        }}
+                        className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-purple-500/20 hover:-translate-y-0.5"
+                        title="Debug knockout round generation state"
+                      >
+                        <span className="hidden sm:inline">Debug Knockout</span>
+                        <span className="sm:hidden">Debug</span>
+                  </button>
                     </div>
                   </div>
                 </div>
@@ -744,6 +930,7 @@ const TournamentDetail: React.FC = () => {
         }))}
         isOrganiser={tournamentRole?.is_organiser || false}
         tournamentId={tournament?.id}
+        tournament={tournament ? { id: tournament.id, status: tournament.status, slug: tournament.slug } : undefined}
         onAddTeam={handleRegisterTeam}
         onAddMatch={handleManageFixtures}
         onUpdateScore={() => {

@@ -172,6 +172,7 @@ class MatchSerializer(serializers.ModelSerializer):
     
     class Meta: 
         model = Match
+        fields = '__all__'
         fields = "__all__"
     
     def get_scorers(self, obj):
@@ -207,13 +208,18 @@ class MatchSerializer(serializers.ModelSerializer):
         assists_data = []
         for assist in obj.assists.all():
             if assist.player:  # Only include assists with a player
+                try:
+                    goal_id = assist.goal.id if assist.goal else None
+                except (AttributeError, MatchScorer.DoesNotExist):
+                    goal_id = None
+                
                 assists_data.append({
                     'id': assist.id,
-                    'player_id': assist.player.id,
-                    'player_name': f"{assist.player.first_name} {assist.player.last_name}".strip(),
-                    'team_id': assist.team.id,
-                    'team_name': assist.team.name,
-                    'goal_id': assist.goal.id if assist.goal else None,
+                    'player_id': assist.player.id if assist.player else None,
+                    'player_name': f"{assist.player.first_name} {assist.player.last_name}".strip() if assist.player else 'Unknown',
+                    'team_id': assist.team.id if assist.team else None,
+                    'team_name': assist.team.name if assist.team else 'Unknown',
+                    'goal_id': goal_id,
                 })
         return assists_data
 

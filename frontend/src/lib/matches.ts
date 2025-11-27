@@ -16,7 +16,9 @@ export interface Match {
   kickoff_at: string;
   home_score: number;
   away_score: number;
-  status: 'scheduled' | 'finished';
+  home_penalties?: number | null;
+  away_penalties?: number | null;
+  status: 'scheduled' | 'live' | 'finished';
   // NEW: Scorer and assist data from backend
   scorers?: Array<{
     id: number;

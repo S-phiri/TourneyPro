@@ -367,7 +367,10 @@ export async function seedTestTeams(tournamentId: number, options?: { teams?: nu
 // NEW: Simulate one round of matches for tournament (organizer only)
 export async function simulateRound(tournamentId: number) {
   const token = getAuthToken();
-  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  const headers: HeadersInit = { 
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -376,11 +379,33 @@ export async function simulateRound(tournamentId: number) {
     headers,
     credentials: 'include',
   });
+  
+  // Check content type before parsing
+  const contentType = res.headers.get('content-type');
   if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || 'Failed to simulate round');
+    if (contentType && contentType.includes('application/json')) {
+      try {
+        const error = await res.json();
+        throw new Error(error.detail || `Failed to simulate round: ${res.status} ${res.statusText}`);
+      } catch (e) {
+        if (e instanceof Error) throw e;
+        throw new Error(`Failed to simulate round: ${res.status} ${res.statusText}`);
+      }
+    } else {
+      // Server returned HTML (likely an error page)
+      const text = await res.text();
+      const errorMatch = text.match(/<title>(.*?)<\/title>/i) || text.match(/<h1>(.*?)<\/h1>/i);
+      const errorMsg = errorMatch ? errorMatch[1] : `Server error (${res.status})`;
+      throw new Error(`Simulation failed: ${errorMsg}. Please check the backend console for details.`);
+    }
   }
-  return res.json();
+  
+  if (contentType && contentType.includes('application/json')) {
+    return res.json();
+  } else {
+    const text = await res.text();
+    throw new Error(`Unexpected response format. Expected JSON but got: ${contentType || 'unknown'}`);
+  }
 }
 
 export async function clearFixtures(tournamentId: number): Promise<{ detail: string; matches_deleted: number }> {
@@ -399,4 +424,8 @@ export async function clearFixtures(tournamentId: number): Promise<{ detail: str
     throw new Error(error.detail || 'Failed to clear fixtures');
   }
   return res.json();
+}
+
+export async function debugKnockout(tournamentId: number): Promise<any> {
+  return api<any>(`/tournaments/${tournamentId}/debug-knockout/`);
 }

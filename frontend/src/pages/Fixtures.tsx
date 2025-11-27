@@ -143,33 +143,69 @@ const Fixtures: React.FC = () => {
     }
   };
 
+  const handleStartMatch = async () => {
+    if (!editingMatch) return;
+    
+    try {
+      await api(`/matches/${editingMatch.id}/start/`, {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      fetchData(); // Refresh matches to get updated status
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start match');
+      throw err;
+    }
+  };
+
   const handleSaveScore = async (
     scores: { home: number; away: number }, 
     scorers: { home: number[]; away: number[] },
-    assists: { home: (number | null)[]; away: (number | null)[] } // NEW: assists parameter
+    assists: { home: (number | null)[]; away: (number | null)[] },
+    penalties?: { home: number | null; away: number | null } // NEW: penalties parameter
   ) => {
     if (!editingMatch) return;
     
     try {
       // Use the score endpoint which handles scorers and assists
+      const payload: any = {
+        home_score: scores.home,
+        away_score: scores.away,
+        home_scorers: scorers.home,
+        away_scorers: scorers.away,
+        home_assists: assists.home,
+        away_assists: assists.away
+      };
+      
+      // Add penalties if provided (for knockout matches)
+      if (penalties && penalties.home !== null && penalties.away !== null) {
+        payload.home_penalties = penalties.home;
+        payload.away_penalties = penalties.away;
+      }
+      
       await api(`/matches/${editingMatch.id}/score/`, {
         method: 'POST',
-        body: JSON.stringify({
-          home_score: scores.home,
-          away_score: scores.away,
-          home_scorers: scorers.home,
-          away_scorers: scorers.away,
-          home_assists: assists.home, // NEW: Send assists
-          away_assists: assists.away   // NEW: Send assists
-        })
+        body: JSON.stringify(payload)
       });
       
       setEditingMatch(null);
       setShowScoreModal(false);
       fetchData(); // Refresh matches
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update score');
-      throw err; // Re-throw to let modal handle it
+    } catch (err: any) {
+      // Check if error requires penalties
+      let errorMessage = err.message || 'Failed to update score';
+      try {
+        if (err.message) {
+          const errorData = JSON.parse(err.message);
+          if (errorData.requires_penalties) {
+            errorMessage = errorData.detail || errorMessage;
+          }
+        }
+      } catch {
+        // Not JSON, use original message
+      }
+      setError(errorMessage);
+      throw new Error(errorMessage);
     }
   };
 
@@ -453,6 +489,12 @@ const Fixtures: React.FC = () => {
           awayTeam={editingMatch.away_team}
           currentScores={{ home: editingMatch.home_score, away: editingMatch.away_score }}
           onSave={handleSaveScore}
+          isKnockout={
+            tournament?.format === 'knockout' || 
+            (tournament?.format === 'combination' && editingMatch.pitch && !editingMatch.pitch.includes('Group'))
+          }
+          matchStatus={editingMatch.status}
+          onStartMatch={handleStartMatch}
         />
       )}
       </div>

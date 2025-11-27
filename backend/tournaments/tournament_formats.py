@@ -13,11 +13,9 @@ def generate_groups(teams: List[Team], type: str = "combinationB") -> List[Dict]
     Generate balanced groups for combinationB format (Groups → Knockout)
     
     Rules:
-    - Try to create groups of 4-5 teams where possible
+    - 2 groups for tournaments with less than 16 teams
+    - 4 groups for tournaments with 16 or more teams
     - Balance group sizes (minimize size difference)
-    - If 10 teams: 2 groups of 5
-    - If 12 teams: 4 groups of 3 or 3 groups of 4
-    - General: prefer groups of 4-5, balance remainder
     
     Returns: List of group dicts with teams assigned
     """
@@ -26,62 +24,113 @@ def generate_groups(teams: List[Team], type: str = "combinationB") -> List[Dict]
     
     num_teams = len(teams)
     
-    # Determine optimal group configuration
-    if num_teams <= 4:
-        # Too few teams, single group
-        return [{"name": "Group A", "teams": teams}]
-    elif num_teams <= 8:
-        # 2 groups of 4
-        mid = num_teams // 2
-        return [
-            {"name": "Group A", "teams": teams[:mid]},
-            {"name": "Group B", "teams": teams[mid:]}
-        ]
-    elif num_teams == 10:
-        # 2 groups of 5
-        return [
-            {"name": "Group A", "teams": teams[:5]},
-            {"name": "Group B", "teams": teams[5:]}
-        ]
-    elif num_teams == 12:
-        # 4 groups of 3 (more balanced for knockout)
-        return [
-            {"name": "Group A", "teams": teams[0:3]},
-            {"name": "Group B", "teams": teams[3:6]},
-            {"name": "Group C", "teams": teams[6:9]},
-            {"name": "Group D", "teams": teams[9:12]}
-        ]
-    elif num_teams <= 16:
-        # 4 groups of 4
-        groups_count = 4
-        per_group = num_teams // groups_count
-        remainder = num_teams % groups_count
-        
-        groups = []
-        start_idx = 0
-        for i in range(groups_count):
-            group_size = per_group + (1 if i < remainder else 0)
-            groups.append({
-                "name": f"Group {chr(65 + i)}",  # A, B, C, D
-                "teams": teams[start_idx:start_idx + group_size]
-            })
-            start_idx += group_size
-        return groups
+    # Determine group configuration
+    if num_teams < 16:
+        # 2 groups for tournaments with less than 16 teams
+        groups_count = 2
     else:
-        # For larger tournaments, use 4-5 teams per group
-        ideal_group_size = 4 if num_teams % 4 == 0 else 5
-        num_groups = (num_teams + ideal_group_size - 1) // ideal_group_size  # Ceiling division
+        # 4 groups for tournaments with 16 or more teams
+        groups_count = 4
+    
+    # Distribute teams evenly across groups
+    per_group = num_teams // groups_count
+    remainder = num_teams % groups_count
+    
+    groups = []
+    start_idx = 0
+    for i in range(groups_count):
+        group_size = per_group + (1 if i < remainder else 0)
+        groups.append({
+            "name": f"Group {chr(65 + i)}",  # A, B, C, D
+            "teams": teams[start_idx:start_idx + group_size]
+        })
+        start_idx += group_size
+    
+    return groups
+
+
+def generate_round_robin_for_group(group_teams: List[Team], tournament: Tournament, group_name: str, start_date: datetime, start_round: int = 1) -> List[Tuple[int, Match]]:
+    """
+    Generate round-robin matches for a single group.
+    Returns list of tuples: (round_number, match)
+    Each team plays every other team exactly once.
+    
+    Args:
+        group_teams: List of teams in this group
+        tournament: Tournament instance
+        group_name: Name of the group (e.g., "Group A")
+        start_date: Start date for first round
+        start_round: Starting round number (default: 1)
+    
+    Returns:
+        List of (round_number, Match) tuples
+    """
+    matches = []
+    num_teams = len(group_teams)
+    
+    if num_teams < 2:
+        return matches
+    
+    # Round-robin algorithm: organize matches into rounds
+    num_rounds = num_teams - 1  # Standard round-robin: (n-1) rounds for n teams
+    rounds = []
+    
+    if num_teams % 2 == 0:  # Even number of teams
+        # Standard round-robin rotation
+        fixed = group_teams[0]  # Fix first team
+        rotating = group_teams[1:]
         
-        groups = []
-        start_idx = 0
-        for i in range(num_groups):
-            group_size = min(ideal_group_size, num_teams - start_idx)
-            groups.append({
-                "name": f"Group {chr(65 + i)}",  # A, B, C, D, ...
-                "teams": teams[start_idx:start_idx + group_size]
-            })
-            start_idx += group_size
-        return groups
+        for round_num in range(num_rounds):
+            round_matches = []
+            # Fixed team plays against rotating[0]
+            round_matches.append((fixed, rotating[0]))
+            
+            # Pair remaining teams
+            for i in range(1, len(rotating) // 2 + 1):
+                round_matches.append((rotating[i], rotating[len(rotating) - i]))
+            
+            rounds.append(round_matches)
+            # Rotate the list (keep first, rotate rest)
+            rotating = [rotating[0]] + [rotating[-1]] + rotating[1:-1]
+    else:  # Odd number of teams
+        # Add a "bye" team (can be None or a placeholder)
+        teams_with_bye = group_teams + [None]
+        fixed = teams_with_bye[0]
+        rotating = teams_with_bye[1:]
+        
+        for round_num in range(num_rounds + 1):  # One extra round for bye
+            round_matches = []
+            # Fixed team plays against rotating[0] (or gets bye if None)
+            if rotating[0] is not None:
+                round_matches.append((fixed, rotating[0]))
+            
+            # Pair remaining teams
+            for i in range(1, len(rotating) // 2 + 1):
+                if rotating[i] is not None and rotating[len(rotating) - i] is not None:
+                    round_matches.append((rotating[i], rotating[len(rotating) - i]))
+            
+            if round_matches:  # Only add non-empty rounds
+                rounds.append(round_matches)
+            # Rotate the list
+            rotating = [rotating[0]] + [rotating[-1]] + rotating[1:-1]
+    
+    # Create match objects organized by round
+    for round_idx, round_matches in enumerate(rounds):
+        round_number = start_round + round_idx
+        round_date = start_date + timedelta(days=round_idx)
+        
+        for home_team, away_team in round_matches:
+            match = Match(
+                tournament=tournament,
+                home_team=home_team,
+                away_team=away_team,
+                kickoff_at=round_date,
+                status='scheduled',
+                pitch=f"{group_name} - Round {round_number}"
+            )
+            matches.append((round_number, match))
+    
+    return matches
 
 
 def generate_league_fixtures(teams: List[Team], tournament: Tournament, start_date: datetime) -> List[Match]:
@@ -288,59 +337,38 @@ def generate_combination_fixtures(
         # Only generate GROUP STAGE matches here (not knockout - those are created after group stage)
         groups = generate_groups(teams, "combinationB")
         
-        # World Cup format: Each team plays (group_size - 1) matches (single round-robin)
-        # For 4 teams in a group: 3 rounds, each team plays 3 matches
-        group_size = len(groups[0]["teams"]) if groups else 4
-        num_rounds = group_size - 1  # Single round-robin: each team plays (n-1) matches
+        # Find the maximum number of rounds needed (largest group size - 1)
+        max_rounds = 0
+        for group in groups:
+            group_size = len(group["teams"])
+            max_rounds = max(max_rounds, group_size - 1)
         
-        # Generate matches round by round (World Cup style - single round-robin)
-        for round_num in range(1, num_rounds + 1):
+        # Generate all round-robin matches for each group first
+        all_group_matches = {}  # {group_name: [(round_num, match), ...]}
+        for group in groups:
+            group_teams = group["teams"]
+            group_name = group["name"]
+            # Generate matches with temporary dates (will be fixed by round number)
+            group_matches = generate_round_robin_for_group(
+                group_teams, 
+                tournament, 
+                group_name, 
+                start_date, 
+                start_round=1
+            )
+            all_group_matches[group_name] = group_matches
+        
+        # Organize matches by round number (all groups play same round on same day)
+        # Round 1 = day 0, Round 2 = day 1, etc.
+        for round_num in range(1, max_rounds + 1):
             round_date = start_date + timedelta(days=round_num - 1)
             
-            # Generate matches for all groups in this round
-            for group in groups:
-                group_teams = group["teams"]
-                group_name = group["name"]
-                
-                # Single round-robin pairings for each round
-                if round_num == 1:
-                    # Round 1: Team 1 vs Team 2, Team 3 vs Team 4
-                    pairings = [
-                        (group_teams[0], group_teams[1]),
-                        (group_teams[2], group_teams[3]) if len(group_teams) >= 4 else None
-                    ]
-                elif round_num == 2:
-                    # Round 2: Team 1 vs Team 3, Team 2 vs Team 4
-                    pairings = [
-                        (group_teams[0], group_teams[2]),
-                        (group_teams[1], group_teams[3]) if len(group_teams) >= 4 else None
-                    ]
-                elif round_num == 3:
-                    # Round 3: Team 1 vs Team 4, Team 2 vs Team 3
-                    pairings = [
-                        (group_teams[0], group_teams[3]) if len(group_teams) >= 4 else None,
-                        (group_teams[1], group_teams[2])
-                    ]
-                else:
-                    # For groups with more/less teams, use rotation algorithm
-                    pairings = []
-                    # Simple rotation: pair teams that haven't played yet
-                    for i in range(0, len(group_teams) - 1, 2):
-                        if i + 1 < len(group_teams):
-                            pairings.append((group_teams[i], group_teams[i + 1]))
-                
-                # Create matches for this round in this group
-                for pairing in pairings:
-                    if pairing and pairing[0] and pairing[1]:
-                        home_team, away_team = pairing
-                        match = Match(
-                            tournament=tournament,
-                            home_team=home_team,
-                            away_team=away_team,
-                            kickoff_at=round_date,
-                            status='scheduled',
-                            pitch=f"{group_name} - Round {round_num}"  # Track group and round
-                        )
+            # Collect all matches for this round from all groups
+            for group_name, group_matches in all_group_matches.items():
+                for match_round_num, match in group_matches:
+                    if match_round_num == round_num:
+                        # Update date to match the round date (all groups play same round on same day)
+                        match.kickoff_at = round_date
                         matches.append(match)
         
         # NOTE: Knockout matches are NOT generated here

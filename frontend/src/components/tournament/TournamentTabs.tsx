@@ -27,6 +27,8 @@ interface Match {
   awayTeam: Team;
   homeScore?: number;
   awayScore?: number;
+  homePenalties?: number | null;
+  awayPenalties?: number | null;
   status: "upcoming" | "live" | "completed";
   startedAt?: string;
   durationMinutes?: number;
@@ -387,25 +389,45 @@ export default function TournamentTabs({
                           )}
                         </div>
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
+                          <div className={`flex items-center gap-3 ${match.homePenalties !== null && match.homePenalties !== undefined && match.homeScore === match.awayScore && match.homePenalties > (match.awayPenalties || 0) ? 'bg-yellow-500/20 rounded-lg px-2 py-1' : ''}`}>
                             <TeamChip name={match.homeTeam.name} initials={match.homeTeam.initials} size="sm" />
-                            <motion.span
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              className="text-2xl font-black text-white"
-                            >
-                              {match.homeScore}
-                            </motion.span>
+                            <div className="flex flex-col items-center">
+                              <motion.span
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                className={`text-2xl font-black ${match.homePenalties !== null && match.homePenalties !== undefined && match.homeScore === match.awayScore && match.homePenalties > (match.awayPenalties || 0) ? 'text-yellow-400' : 'text-white'}`}
+                              >
+                                {match.homeScore}
+                              </motion.span>
+                              {match.homePenalties !== null && match.homePenalties !== undefined && (
+                                <span className="text-xs text-yellow-400 font-semibold">
+                                  ({match.homePenalties} pens)
+                                  {match.homeScore === match.awayScore && match.homePenalties > (match.awayPenalties || 0) && (
+                                    <span className="ml-1">🏆</span>
+                                  )}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <span className="text-gray-500 font-bold mx-4">-</span>
-                          <div className="flex items-center gap-3">
-                            <motion.span
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              className="text-2xl font-black text-white"
-                            >
-                              {match.awayScore}
-                            </motion.span>
+                          <div className={`flex items-center gap-3 ${match.awayPenalties !== null && match.awayPenalties !== undefined && match.homeScore === match.awayScore && match.awayPenalties > (match.homePenalties || 0) ? 'bg-yellow-500/20 rounded-lg px-2 py-1' : ''}`}>
+                            <div className="flex flex-col items-center">
+                              <motion.span
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                className={`text-2xl font-black ${match.awayPenalties !== null && match.awayPenalties !== undefined && match.homeScore === match.awayScore && match.awayPenalties > (match.homePenalties || 0) ? 'text-yellow-400' : 'text-white'}`}
+                              >
+                                {match.awayScore}
+                              </motion.span>
+                              {match.awayPenalties !== null && match.awayPenalties !== undefined && (
+                                <span className="text-xs text-yellow-400 font-semibold">
+                                  ({match.awayPenalties} pens)
+                                  {match.homeScore === match.awayScore && match.awayPenalties > (match.homePenalties || 0) && (
+                                    <span className="ml-1">🏆</span>
+                                  )}
+                                </span>
+                              )}
+                            </div>
                             <TeamChip name={match.awayTeam.name} initials={match.awayTeam.initials} size="sm" />
                           </div>
                         </div>

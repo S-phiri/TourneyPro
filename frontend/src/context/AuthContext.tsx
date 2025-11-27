@@ -42,17 +42,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
     
     if (token) {
       try {
+        // Validate token by fetching user data
         const userData = await getCurrentUser();
+        // Only set user and token if we successfully got user data
         setUser(userData);
         setAccessToken(token);
       } catch (error) {
-        console.warn('Failed to restore auth state:', error);
+        // Token is invalid/expired or server error - clear it
+        console.warn('Failed to restore auth state - clearing invalid token:', error);
         clearAuthToken();
         setUser(null);
         setAccessToken(null);
       }
     } else {
-      // No token means no user - clear any stale state
+      // No token means no user - ensure state is cleared
       setUser(null);
       setAccessToken(null);
     }
