@@ -1,6 +1,7 @@
 # core/urls.py
 from django.contrib import admin
 from django.urls import path, include
+from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 from tournaments.views import VenueViewSet, TournamentViewSet, TeamViewSet, RegistrationViewSet, MatchViewSet, UserView, RegisterView, PlayerViewSet, TeamPlayerViewSet, RegisterManagerView, RestrictedTokenObtainPairView
@@ -14,8 +15,26 @@ router.register(r'matches', MatchViewSet, basename="matches")
 router.register(r'players', PlayerViewSet, basename="players")
 router.register(r'teamplayers', TeamPlayerViewSet, basename="teamplayers")
 
+def root_view(request):
+    """Root endpoint - simple health check"""
+    return JsonResponse({
+        'status': 'ok',
+        'message': 'Tournament API is running',
+        'endpoints': {
+            'admin': '/admin/',
+            'api': '/api/',
+            'auth': '/api/auth/login/'
+        }
+    })
+
 urlpatterns = [
+    # Root path - fixes 404 on "/"
+    path('', root_view, name='root'),
+    
+    # Admin panel
     path('admin/', admin.site.urls),
+    
+    # API routes
     path('api/', include(router.urls)),
     
     # JWT Authentication endpoints (restricted to Benson only)
