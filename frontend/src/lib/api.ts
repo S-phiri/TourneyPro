@@ -1,16 +1,16 @@
 // src/lib/api.ts
 import { getAuthToken, getRefreshToken, refresh as refreshToken, clearAuthToken, setAuthToken } from './auth';
 
-// Auto-detect API base URL based on current hostname
+// Auto-detect API base URL based on environment variable or hostname
 export function getApiBaseUrl(): string {
-  // Use environment variable if set
+  // Use environment variable if set (production)
   if (import.meta.env.VITE_API_BASE_URL) {
     const envUrl = import.meta.env.VITE_API_BASE_URL;
     // Ensure it ends with /api if not already
     return envUrl.endsWith('/api') ? envUrl : `${envUrl}/api`;
   }
   
-  // Auto-detect based on current hostname
+  // Development fallback: auto-detect based on current hostname
   const hostname = window.location.hostname;
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
   
@@ -19,6 +19,8 @@ export function getApiBaseUrl(): string {
     apiUrl = 'http://localhost:8000/api';
   } else {
     // Use the same hostname as the frontend, just change port to 8000
+    // For production, this assumes backend is on same hostname but port 8000
+    // Better to set VITE_API_BASE_URL env var in production
     apiUrl = `http://${hostname}:8000/api`;
   }
   

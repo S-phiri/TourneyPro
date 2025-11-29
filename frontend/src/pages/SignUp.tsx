@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Trophy } from 'lucide-react';
+import { getApiBaseUrl } from '../lib/api';
 
 interface SignUpData {
   username: string;
@@ -52,19 +53,8 @@ const SignUp: React.FC = () => {
       setError(null);
       
       // Get API base URL (auto-detects based on hostname)
-      const hostname = window.location.hostname;
-      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-      let apiBase = import.meta.env.VITE_API_BASE_URL;
-      
-      if (!apiBase) {
-        if (isLocalhost) {
-          apiBase = 'http://localhost:8000/api';
-        } else {
-          apiBase = `http://${hostname}:8000/api`;
-        }
-      } else if (!apiBase.endsWith('/api')) {
-        apiBase = `${apiBase}/api`;
-      }
+      // Use the shared API base URL function
+      const apiBase = getApiBaseUrl();
       
       // Create user account
       const response = await fetch(`${apiBase}/auth/register/`, {

@@ -79,38 +79,19 @@ DATABASES = {
 }
 
 # CORS setup so your React app can connect
-# For development, allow all origins on local network (192.168.x.x, 10.x.x.x, etc.)
-if DEBUG:
-    # In development, allow all origins for easier LAN testing
-    CORS_ALLOW_ALL_ORIGINS = True
-else:
-    CORS_ALLOW_ALL_ORIGINS = False
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:5173",  # your Vite dev server
-        "http://127.0.0.1:5173",
-        "http://192.168.1.80:5173",   # frontend via LAN
-        "http://192.168.1.80:3000",   # (add this too if you use CRA)
-    ]
+# Simplified for deployment - allow all origins for today
+CORS_ALLOW_ALL_ORIGINS = True
 
 # Allow cookies/credentials from the frontend if needed
 CORS_ALLOW_CREDENTIALS = True
 
-# If you use CSRF/session on API endpoints during dev
-if DEBUG:
-    # In development, allow all local network origins
-    CSRF_TRUSTED_ORIGINS = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://192.168.1.80:5173",   # frontend via LAN
-        "http://192.168.1.80:3000",   # (add this too if you use CRA)
-    ]
+# CSRF trusted origins - simplified for today
+# In production, you may want to restrict this based on FRONTEND_URL env var
+frontend_url = os.environ.get('FRONTEND_URL', '')
+if frontend_url:
+    CSRF_TRUSTED_ORIGINS = [frontend_url]
 else:
-    CSRF_TRUSTED_ORIGINS = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://192.168.1.80:5173",
-        "http://192.168.1.80:3000",
-    ]
+    CSRF_TRUSTED_ORIGINS = []
 
 # Optional CORS header tuning
 CORS_ALLOW_HEADERS = [

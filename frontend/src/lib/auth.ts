@@ -109,11 +109,7 @@ export async function login(username: string, password: string): Promise<LoginRe
     // Enhanced error handling for network issues
     if (error instanceof TypeError && error.message.includes('fetch')) {
       // Network error - likely can't reach the server
-      const hostname = window.location.hostname;
-      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
-      const expectedBackend = isLocalhost 
-        ? 'http://localhost:8000' 
-        : `http://${hostname}:8000`;
+      const expectedBackend = getApiBaseUrl();
       
       console.error('[Auth] Network error - cannot reach backend:', {
         expectedBackend,
