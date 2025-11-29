@@ -101,16 +101,17 @@ const StartHosting: React.FC = () => {
         venue_id: payload.venue_id // Backend expects 'venue_id' field
       };
 
-      await api('/tournaments/', {
+      const created = await api<any>('/tournaments/', {
         method: 'POST',
         body: JSON.stringify(submitPayload)
       });
 
       setSuccess('Tournament created successfully!');
       
-      // Navigate to dashboard after a short delay
+      // Navigate to tournament detail using slug (or ID as fallback)
+      const tournamentSlug = created.slug || created.id;
       setTimeout(() => {
-        navigate('/dashboard');
+        navigate(`/tournaments/${tournamentSlug}`);
       }, 2000);
 
     } catch (err) {

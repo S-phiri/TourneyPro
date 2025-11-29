@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { LogOut, LogIn, Home, Trophy } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { api } from '../../lib/api';
 
 interface TournamentNavProps {
   tournamentId?: number;
@@ -13,16 +14,38 @@ interface TournamentNavProps {
 
 export default function TournamentNav({ 
   tournamentId, 
-  tournamentSlug,
+  tournamentSlug: initialTournamentSlug,
   showBackButton = false,
   onBackClick 
 }: TournamentNavProps) {
   const navigate = useNavigate();
   const { isAuthenticated, user, logout, isLoading } = useAuth();
+  const [tournamentSlug, setTournamentSlug] = useState<string | undefined>(initialTournamentSlug);
+
+  // If we have tournamentId but no slug, fetch the slug
+  useEffect(() => {
+    if (tournamentId && !tournamentSlug) {
+      api<any>(`/tournaments/${tournamentId}/`)
+        .then(data => {
+          if (data?.slug) {
+            setTournamentSlug(data.slug);
+          }
+        })
+        .catch(err => {
+          console.warn('Failed to fetch tournament slug:', err);
+        });
+    } else if (initialTournamentSlug) {
+      setTournamentSlug(initialTournamentSlug);
+    }
+  }, [tournamentId, initialTournamentSlug]);
 
   const getTournamentPath = () => {
-    if (tournamentSlug) return `/t/${tournamentSlug}`;
-    if (tournamentId) return `/tournaments/${tournamentId}`;
+    if (tournamentSlug) return `/tournaments/${tournamentSlug}`;
+    if (tournamentId) {
+      // Try to use by-slug endpoint as fallback, but we'll use ID route if needed
+      // The route handler should handle ID lookups
+      return `/tournaments/${tournamentId}`;
+    }
     return '/leagues';
   };
 
@@ -33,11 +56,14 @@ export default function TournamentNav({
   };
 
   const handleLoginClick = () => {
-    // Navigate to manager login with tournament context if available
-    const path = tournamentId 
-      ? `/manager/login?tournament=${tournamentId}`
-      : '/manager/login';
-    navigate(path);
+    // Navigate to login page (host/organiser login)
+    // If we have a tournament slug, include it in the return URL
+    const returnUrl = tournamentSlug 
+      ? `?returnUrl=/tournaments/${tournamentSlug}`
+      : tournamentId
+      ? `?returnUrl=/tournaments/${tournamentId}`
+      : '';
+    navigate(`/login${returnUrl}`);
   };
 
   if (isLoading) {
@@ -109,7 +135,7 @@ export default function TournamentNav({
                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-lg font-bold transition-all shadow-lg shadow-yellow-500/20"
               >
                 <LogIn className="w-4 h-4" />
-                Manager Login
+                Host Login
               </motion.button>
             )}
           </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { getTeam, listTeamPlayers, listMatches, api } from '../lib/api';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { getTeam, getTeamBySlug, listTeamPlayers, listMatches, api } from '../lib/api';
 import { motion } from 'framer-motion';
 import { Users, Trophy, Calendar, DollarSign, MapPin, PlusCircle, Edit, ArrowLeft, Award, Goal, Shield, TrendingUp, BarChart3 } from 'lucide-react';
 import TeamChip from '../components/tournament/TeamChip';
@@ -13,48 +13,118 @@ import StatCard from '../components/stats/StatCard';
 import TopPerformers from '../components/stats/TopPerformers';
 
 export default function TeamHub() {
-  const { id } = useParams<{ id: string }>();
+  const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, isLoading: authLoading } = useAuth();
-  const teamIdNum = Number(id);
+  
+  // Get tournament context from URL if provided
+  const tournamentSlugFromUrl = searchParams.get('tournament');
 
   const [team, setTeam] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
   const [fixtures, setFixtures] = useState<any[]>([]);
   const [tournamentId, setTournamentId] = useState<number | null>(null);
+  const [tournamentSlug, setTournamentSlug] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // NEW: Added 'stats' tab
   const [activeTab, setActiveTab] = useState<'overview' | 'players' | 'fixtures' | 'stats'>('overview');
   
-  // Check if current user is the team manager
-  // TeamSerializer returns 'manager' not 'manager_user'
+  // Check if current user is the team manager or organiser
   const isManager = user && team && (team.manager?.id === user.id || team.manager_user?.id === user.id);
+  const isOrganiser = user?.is_staff || false;
 
   useEffect(() => {
     async function load() {
-      if (!teamIdNum) {
-        setError('Invalid team ID');
+      if (!slug) {
+        setError('Invalid team slug');
         setLoading(false);
         return;
       }
       try {
         setLoading(true);
-        const t = await getTeam(teamIdNum);
+        // Try to get team by slug first
+        let t;
+        try {
+          t = await getTeamBySlug(slug);
+        } catch (e) {
+          // Fallback to ID if slug doesn't work
+          const teamIdNum = Number(slug);
+          if (isNaN(teamIdNum)) throw e;
+          t = await getTeam(teamIdNum);
+        }
         setTeam(t);
+        const teamIdNum = t.id;
         const roster = await listTeamPlayers({ team: teamIdNum });
         setPlayers(Array.isArray(roster) ? roster : []);
         
-        // Get tournament ID from team's registration for filtering matches
-        const registrationsData = await api<any[]>(`/registrations/?team=${teamIdNum}`);
-        
+        // Get tournament ID and slug - prefer tournament from URL context, otherwise from registration
         let tid: number | null = null;
-        if (registrationsData && registrationsData.length > 0 && registrationsData[0].tournament) {
-          tid = typeof registrationsData[0].tournament === 'number' 
-            ? registrationsData[0].tournament 
-            : registrationsData[0].tournament.id;
+        let tslug: string | null = null;
+        
+        // If tournament context is provided in URL, use it
+        if (tournamentSlugFromUrl) {
+          try {
+            const tournamentData = await api<any>(`/tournaments/by-slug/${tournamentSlugFromUrl}/`);
+            if (tournamentData) {
+              tid = tournamentData.id;
+              tslug = tournamentData.slug || tournamentSlugFromUrl;
+            }
+          } catch (e) {
+            console.warn('Failed to fetch tournament from URL context:', e);
+          }
         }
+        
+        // If no tournament from URL, get from team's registration
+        if (!tid) {
+          const registrationsData = await api<any[]>(`/registrations/?team=${teamIdNum}`);
+          
+          if (registrationsData && registrationsData.length > 0) {
+            // Find the registration for the tournament we're looking for, or use the first one
+            let registration = registrationsData.find((r: any) => 
+              r.tournament?.slug === tournamentSlugFromUrl || 
+              (typeof r.tournament === 'object' && r.tournament?.slug === tournamentSlugFromUrl)
+            ) || registrationsData[0];
+            
+            if (registration?.tournament) {
+              const tournament = registration.tournament;
+              
+              if (typeof tournament === 'object') {
+                // Tournament is a full object (from serializer)
+                tid = tournament.id;
+                tslug = tournament.slug || null;
+                
+                // If slug is missing, fetch it explicitly
+                if (!tslug && tid) {
+                  try {
+                    const tournamentData = await api<any>(`/tournaments/${tid}/`);
+                    if (tournamentData?.slug) {
+                      tslug = tournamentData.slug;
+                    }
+                  } catch (e) {
+                    console.warn('Failed to fetch tournament slug:', e);
+                  }
+                }
+              } else if (typeof tournament === 'number') {
+                // Tournament is just an ID
+                tid = tournament;
+                // Fetch full tournament data to get slug
+                try {
+                  const tournamentData = await api<any>(`/tournaments/${tid}/`);
+                  if (tournamentData?.slug) {
+                    tslug = tournamentData.slug;
+                  }
+                } catch (e) {
+                  console.warn('Failed to fetch tournament data:', e);
+                }
+              }
+            }
+          }
+        }
+        
         setTournamentId(tid);
+        setTournamentSlug(tslug);
         
         // Fetch matches filtered by tournament and team
         if (tid) {
@@ -72,14 +142,14 @@ export default function TeamHub() {
       }
     }
     load();
-  }, [teamIdNum]);
+  }, [slug, tournamentSlugFromUrl]);
 
   // NEW: Compute derived statistics - must be before early returns (React Hooks rules)
   const computedStats = useMemo(() => {
     if (!team || !fixtures || !players) return null;
     const teamPlayersList = players || [];
-    return computeAllTeamStats(fixtures, teamIdNum, teamPlayersList, team);
-  }, [fixtures, players, team, teamIdNum]);
+    return computeAllTeamStats(fixtures, team?.id, teamPlayersList, team);
+  }, [fixtures, players, team]);
 
   if (loading || authLoading) {
     return (
@@ -172,7 +242,11 @@ export default function TeamHub() {
       </div>
       <div className="relative z-10">
       {/* Tournament Navigation */}
-      <TournamentNav tournamentId={tournamentId || undefined} showBackButton={true} />
+      <TournamentNav 
+        tournamentId={tournamentId || undefined} 
+        tournamentSlug={tournamentSlug || undefined}
+        showBackButton={true} 
+      />
 
       {/* Header */}
       <div className="container mx-auto px-6 py-8">
@@ -209,7 +283,7 @@ export default function TeamHub() {
             <Trophy className="w-8 h-8 text-yellow-500 mx-auto mb-3" />
             <p className="text-gray-400 text-sm mb-1">Record (W-D-L)</p>
             <p className="text-3xl font-bold text-white">
-              {team.wins ?? 0}-{team.draws ?? 0}-{team.losses ?? 0}
+              {computedStats ? `${computedStats.wins}-${computedStats.draws}-${computedStats.losses}` : `${team.wins ?? 0}-${team.draws ?? 0}-${team.losses ?? 0}`}
             </p>
           </div>
           <div className="bg-gradient-to-br from-zinc-900 to-black border border-yellow-500/20 rounded-xl p-6 text-center hover:border-yellow-500/50 transition-all">
@@ -327,9 +401,9 @@ export default function TeamHub() {
                           {upcomingMatches[0].kickoff_at ? formatDate(upcomingMatches[0].kickoff_at) : 'TBC'} at {upcomingMatches[0].pitch || 'TBC'}
                         </p>
                         {/* NEW: View Fixture link */}
-                        {upcomingMatches[0].id && tournamentId && (
+                        {upcomingMatches[0].id && (tournamentSlug || tournamentId) && (
                           <button
-                            onClick={() => navigate(`/tournaments/${tournamentId}/fixtures`)}
+                            onClick={() => navigate(`/tournaments/${tournamentSlug || tournamentId}/fixtures`)}
                             className="text-yellow-500 text-sm hover:text-yellow-400 hover:underline mt-2 flex items-center gap-1"
                           >
                             View Fixture →
@@ -349,9 +423,9 @@ export default function TeamHub() {
               >
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="text-2xl font-bold text-white">Roster</h3>
-                  {isManager && (
+                  {(isManager || isOrganiser) && (
                     <button
-                      onClick={() => navigate(`/teams/${id}/add-players`)}
+                      onClick={() => navigate(`/teams/${slug || team?.id}/add-players`)}
                       className="bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold px-5 py-2.5 rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
                     >
                       <PlusCircle className="w-4 h-4" />
@@ -362,9 +436,9 @@ export default function TeamHub() {
                 {teamPlayers.length === 0 ? (
                   <div className="text-center py-12 bg-zinc-800/30 border border-zinc-700 rounded-lg">
                     <p className="text-gray-400 text-lg mb-4">No players in this team yet.</p>
-                    {isManager && (
+                    {(isManager || isOrganiser) && (
                       <button
-                        onClick={() => navigate(`/teams/${id}/add-players`)}
+                        onClick={() => navigate(`/teams/${slug || team?.id}/add-players`)}
                         className="bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold px-6 py-3 rounded-xl shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5 transition-all"
                       >
                         Add First Player

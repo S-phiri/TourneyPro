@@ -161,7 +161,13 @@ const Dashboard: React.FC = () => {
               <TournamentCard
                 key={tournament.id}
                 tournament={tournament}
-                onClick={() => window.location.href = `/tournaments/${tournament.id}`}
+                onClick={() => {
+                  if (tournament.slug) {
+                    window.location.href = `/tournaments/${tournament.slug}`;
+                  } else {
+                    window.location.href = `/tournaments/${tournament.id}`;
+                  }
+                }}
               />
             ))}
           </div>

@@ -1,5 +1,8 @@
 // src/lib/auth.ts
-const BASE = import.meta.env.VITE_API_BASE_URL;
+
+import { getApiBaseUrl } from './api';
+
+const BASE = getApiBaseUrl();
 
 export interface LoginResponse {
   access: string;
@@ -13,6 +16,7 @@ export interface User {
   first_name?: string;
   last_name?: string;
   role_hint?: 'host' | 'manager' | 'viewer';
+  is_staff?: boolean; // For single organiser mode
 }
 
 // Token management
@@ -47,18 +51,50 @@ export function saveAuthToken(accessToken: string, refreshToken: string): void {
 
 // Auth API calls
 export async function login(username: string, password: string): Promise<LoginResponse> {
+  const loginUrl = `${BASE}/auth/login/`;
+  
+  // Debug logging
+  if (import.meta.env.DEV) {
+    console.log('[Auth] Attempting login to:', loginUrl);
+  }
+  
   try {
-    const response = await fetch(`${BASE}/auth/login/`, {
+    const response = await fetch(loginUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ username, password }),
-      credentials: 'include',
+      credentials: 'omit', // Changed from 'include' to avoid CORS issues
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
+      let errorText = '';
+      try {
+        errorText = await response.text();
+        // Try to parse as JSON
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.detail) {
+            errorText = errorJson.detail;
+          }
+        } catch {
+          // Not JSON, use text as-is
+        }
+      } catch {
+        errorText = `HTTP ${response.status}: ${response.statusText}`;
+      }
+      
+      // Enhanced error logging
+      if (import.meta.env.DEV) {
+        console.error('[Auth] Login failed:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText,
+          url: loginUrl
+        });
+      }
+      
       throw new Error(errorText || `Login failed: ${response.status} ${response.statusText}`);
     }
 
@@ -70,6 +106,26 @@ export async function login(username: string, password: string): Promise<LoginRe
     
     return data;
   } catch (error) {
+    // Enhanced error handling for network issues
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      // Network error - likely can't reach the server
+      const hostname = window.location.hostname;
+      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+      const expectedBackend = isLocalhost 
+        ? 'http://localhost:8000' 
+        : `http://${hostname}:8000`;
+      
+      console.error('[Auth] Network error - cannot reach backend:', {
+        expectedBackend,
+        loginUrl,
+        error: error.message
+      });
+      
+      throw new Error(
+        `Cannot connect to server at ${expectedBackend}. ` +
+        `Please ensure the backend is running on 0.0.0.0:8000 and accessible from your network.`
+      );
+    }
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
       throw new Error('Cannot connect to server. Please check if the backend is running.');
     }

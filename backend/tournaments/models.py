@@ -75,8 +75,9 @@ class Tournament(models.Model):
 
 class Team(models.Model):
     name = models.CharField(max_length=160)
-    manager_name = models.CharField(max_length=160)
-    manager_email = models.EmailField()
+    slug = models.SlugField(max_length=200, unique=True, blank=True, null=True)  # URL-friendly identifier
+    manager_name = models.CharField(max_length=160, blank=True, null=True)
+    manager_email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=40, blank=True)
     # Optional manager user link (additive)
     manager_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='managed_teams')
@@ -88,6 +89,20 @@ class Team(models.Model):
     goals_against = models.PositiveIntegerField(default=0)
 
     def __str__(self): return self.name
+    
+    def save(self, *args, **kwargs):
+        """Auto-generate slug from name if not provided"""
+        if not self.slug:
+            from django.utils.text import slugify
+            base_slug = slugify(self.name)
+            slug = base_slug
+            counter = 1
+            # Ensure uniqueness
+            while Team.objects.filter(slug=slug).exclude(pk=self.pk).exists():
+                slug = f"{base_slug}-{counter}"
+                counter += 1
+            self.slug = slug
+        super().save(*args, **kwargs)
 
     @property
     def points(self):

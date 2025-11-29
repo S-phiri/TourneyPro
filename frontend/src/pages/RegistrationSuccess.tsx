@@ -49,13 +49,8 @@ export default function RegistrationSuccess() {
           setPolling(false);
           // Small delay to show success message
           setTimeout(() => {
-            if (slug) {
-              navigate(`/t/${slug}/teams/${data.team_id}/add-players?onboard=1`);
-            } else if (id) {
-              navigate(`/tournaments/${id}/teams/${data.team_id}/add-players?onboard=1`);
-            } else {
-              navigate(`/teams/${data.team_id}/add-players?onboard=1`);
-            }
+            // Navigate to add players page (teams route doesn't need tournament in path)
+            navigate(`/teams/${data.team_id}/add-players?onboard=1`);
           }, 500);
           return;
         }
@@ -223,13 +218,8 @@ export default function RegistrationSuccess() {
               {isPaid && status.can_edit && status.team_id && (
                 <button
                   onClick={() => {
-                    if (slug) {
-                      navigate(`/t/${slug}/teams/${status.team_id}/add-players?onboard=1`);
-                    } else if (id) {
-                      navigate(`/tournaments/${id}/teams/${status.team_id}/add-players?onboard=1`);
-                    } else {
-                      navigate(`/teams/${status.team_id}/add-players?onboard=1`);
-                    }
+                    // Navigate to add players page (teams route doesn't need tournament in path)
+                    navigate(`/teams/${status.team_id}/add-players?onboard=1`);
                   }}
                   className="btn-primary w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-bold py-3 text-lg"
                 >
@@ -240,8 +230,13 @@ export default function RegistrationSuccess() {
               {(isPending || isCancelled || !polling) && (
                 <button
                   onClick={() => {
-                    if (slug) {
-                      navigate(`/t/${slug}`);
+                    // Navigate to tournament using slug or ID
+                    if (status.tournament_slug) {
+                      navigate(`/tournaments/${status.tournament_slug}`);
+                    } else if (status.tournament_id) {
+                      navigate(`/tournaments/${status.tournament_id}`);
+                    } else if (slug) {
+                      navigate(`/tournaments/${slug}`);
                     } else if (id) {
                       navigate(`/tournaments/${id}`);
                     } else {

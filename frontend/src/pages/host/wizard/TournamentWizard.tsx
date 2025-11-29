@@ -14,6 +14,7 @@ export type Format = 'league' | 'knockout' | 'combination';
 
 export interface WizardState {
   id?: number; // draft id if resuming
+  slug?: string; // tournament slug for navigation
   format: Format;
   basics: {
     name: string;
@@ -133,6 +134,7 @@ export default function TournamentWizard() {
       // Reconstruct wizard state from tournament
       setState({
         id: tournament.id,
+        slug: tournament.slug,
         format: tournament.format || 'league',
         basics: {
           name: tournament.name || '',
@@ -215,7 +217,7 @@ export default function TournamentWizard() {
           method: 'POST',
           body: JSON.stringify(payload),
         });
-        const updatedState = { ...newState, id: created.id };
+        const updatedState = { ...newState, id: created.id, slug: created.slug };
         return updatedState; // Return updated state so caller can use it
       }
     } catch (err) {
@@ -347,8 +349,12 @@ export default function TournamentWizard() {
       // Generate fixtures
       await generateFixtures(tournamentId);
 
-      // Navigate to tournament detail
-      navigate(`/tournaments/${tournamentId}`, {
+      // Fetch tournament to get slug (slug is auto-generated on save)
+      const tournament = await api<any>(`/tournaments/${tournamentId}/`);
+      const tournamentSlug = tournament.slug || tournamentId;
+
+      // Navigate to tournament detail using slug
+      navigate(`/tournaments/${tournamentSlug}`, {
         state: { message: 'Competition created and fixtures generated!' }
       });
     } catch (err: any) {

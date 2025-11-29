@@ -51,8 +51,23 @@ const SignUp: React.FC = () => {
       setIsLoading(true);
       setError(null);
       
+      // Get API base URL (auto-detects based on hostname)
+      const hostname = window.location.hostname;
+      const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+      let apiBase = import.meta.env.VITE_API_BASE_URL;
+      
+      if (!apiBase) {
+        if (isLocalhost) {
+          apiBase = 'http://localhost:8000/api';
+        } else {
+          apiBase = `http://${hostname}:8000/api`;
+        }
+      } else if (!apiBase.endsWith('/api')) {
+        apiBase = `${apiBase}/api`;
+      }
+      
       // Create user account
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/auth/register/`, {
+      const response = await fetch(`${apiBase}/auth/register/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

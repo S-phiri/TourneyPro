@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { api } from '../lib/api';
+import { motion, AnimatePresence } from 'framer-motion';
+import { api, getPlayersForMvp, setTournamentMvp } from '../lib/api';
 import AwardCard from '../components/awards/AwardCard';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, X, Trophy } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 interface AwardsData {
   top_scorer?: {
@@ -33,12 +34,6 @@ interface AwardsData {
     assists: number;
   };
   clean_sheets_leader?: {
-    player: {
-      id: number;
-      first_name: string;
-      last_name: string;
-      full_name: string;
-    };
     team: {
       id: number;
       name: string;
@@ -86,10 +81,15 @@ interface AwardsData {
 const TournamentAwards: React.FC = () => {
   const { id, slug } = useParams<{ id?: string; slug?: string }>();
   const navigate = useNavigate();
+  const { user, isOrganiser } = useAuth();
   const [awards, setAwards] = useState<AwardsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tournament, setTournament] = useState<any>(null);
+  const [showMvpModal, setShowMvpModal] = useState(false);
+  const [mvpPlayers, setMvpPlayers] = useState<any[]>([]);
+  const [selectedMvpId, setSelectedMvpId] = useState<number | null>(null);
+  const [mvpModalLoading, setMvpModalLoading] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -115,6 +115,29 @@ const TournamentAwards: React.FC = () => {
         // Fetch awards
         const awardsData = await api<AwardsData>(`/tournaments/${tournamentId}/awards/`);
         setAwards(awardsData);
+        
+        // Check if MVP selection modal should be shown
+        // Show if: tournament is completed, user is organiser, and MVP hasn't been manually selected
+        const isCompleted = tournamentData.status === 'completed';
+        const mvpAlreadySelected = tournamentData.structure?.selected_mvp_player_id;
+        const shouldShowModal = isCompleted && isOrganiser && !mvpAlreadySelected;
+        
+        if (shouldShowModal) {
+          // Check if modal was already shown (use localStorage)
+          const modalShownKey = `mvp_modal_shown_${tournamentId}`;
+          const modalShown = localStorage.getItem(modalShownKey);
+          
+          if (!modalShown) {
+            // Fetch players for MVP selection
+            try {
+              const playersData = await getPlayersForMvp(tournamentId);
+              setMvpPlayers(playersData.players);
+              setShowMvpModal(true);
+            } catch (err) {
+              console.error('Failed to load players for MVP:', err);
+            }
+          }
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load awards');
       } finally {
@@ -123,7 +146,7 @@ const TournamentAwards: React.FC = () => {
     };
 
     fetchData();
-  }, [id, slug]);
+  }, [id, slug, isOrganiser]);
 
   if (loading) {
     return (
@@ -295,7 +318,7 @@ const TournamentAwards: React.FC = () => {
               {awards.clean_sheets_leader && (
                 <AwardCard
                   type="clean_sheets"
-                  title="Clean Sheets Leader"
+                  title="Most Clean Sheets"
                   winner={awards.clean_sheets_leader}
                   stats={`${awards.clean_sheets_leader.clean_sheets} clean sheets`}
                 />
@@ -324,6 +347,143 @@ const TournamentAwards: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* MVP Selection Modal */}
+      <AnimatePresence>
+        {showMvpModal && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowMvpModal(false)}
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-zinc-900 border border-yellow-500/30 rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                      <Trophy className="w-6 h-6 text-yellow-500" />
+                      Select Tournament MVP
+                    </h2>
+                    <p className="text-gray-400 text-sm mt-1">Choose the Most Valuable Player for this tournament</p>
+                  </div>
+                  <button
+                    onClick={() => setShowMvpModal(false)}
+                    className="text-gray-400 hover:text-white transition-colors"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+
+                {mvpModalLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-500"></div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2 max-h-96 overflow-y-auto mb-6">
+                      {mvpPlayers.length === 0 ? (
+                        <p className="text-gray-400 text-center py-8">No players found in this tournament.</p>
+                      ) : (
+                        mvpPlayers.map((player, index) => (
+                          <motion.button
+                            key={player.id}
+                            onClick={() => setSelectedMvpId(player.id)}
+                            className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
+                              selectedMvpId === player.id
+                                ? 'border-yellow-500 bg-yellow-500/10'
+                                : 'border-zinc-700 bg-zinc-800/50 hover:border-zinc-600'
+                            }`}
+                            whileHover={{ scale: 1.01 }}
+                            whileTap={{ scale: 0.99 }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-4">
+                                <span className={`font-bold text-lg w-8 ${index < 3 ? 'text-yellow-500' : 'text-gray-400'}`}>
+                                  {index + 1}
+                                </span>
+                                <div>
+                                  <div className="text-white font-semibold text-lg">{player.full_name}</div>
+                                  <div className="text-gray-400 text-sm">{player.team_name}</div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm text-gray-400">
+                                  {player.goals} goals • {player.assists} assists
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {player.mvp_score} G+A
+                                </div>
+                              </div>
+                              {selectedMvpId === player.id && (
+                                <div className="ml-4">
+                                  <div className="w-6 h-6 rounded-full bg-yellow-500 flex items-center justify-center">
+                                    <svg className="w-4 h-4 text-black" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                    </svg>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </motion.button>
+                        ))
+                      )}
+                    </div>
+
+                    <div className="flex gap-3 pt-4 border-t border-zinc-700">
+                      <button
+                        onClick={() => setShowMvpModal(false)}
+                        disabled={mvpModalLoading}
+                        className="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-white font-medium transition-colors disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!selectedMvpId || !tournament?.id) {
+                            alert('Please select a player');
+                            return;
+                          }
+                          setMvpModalLoading(true);
+                          try {
+                            const result = await setTournamentMvp(tournament.id, selectedMvpId);
+                            // Mark modal as shown
+                            localStorage.setItem(`mvp_modal_shown_${tournament.id}`, 'true');
+                            alert('✓ MVP selected successfully!');
+                            setShowMvpModal(false);
+                            // Refresh awards
+                            const awardsData = await api<AwardsData>(`/tournaments/${tournament.id}/awards/`);
+                            setAwards(awardsData);
+                            // Refresh tournament to update structure
+                            const tournamentData = await api<any>(`/tournaments/${tournament.id}/`);
+                            setTournament(tournamentData);
+                          } catch (err: any) {
+                            alert(err.message || 'Failed to set MVP');
+                          } finally {
+                            setMvpModalLoading(false);
+                          }
+                        }}
+                        disabled={!selectedMvpId || mvpModalLoading}
+                        className="flex-1 px-4 py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {mvpModalLoading ? 'Saving...' : 'Select MVP'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

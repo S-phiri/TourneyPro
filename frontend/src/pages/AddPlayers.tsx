@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { createPlayer, addPlayerToTeam, getTeam, listTeamPlayers, getRegistrationStatus, api } from '../lib/api';
+import { createPlayer, addPlayerToTeam, getTeam, getTeamBySlug, listTeamPlayers, getRegistrationStatus, api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import TournamentNav from '../components/tournament/TournamentNav';
 
@@ -14,12 +14,11 @@ type PlayerForm = {
 };
 
 export default function AddPlayers() {
-  const { id } = useParams<{ id: string }>();
+  const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const onboard = searchParams.get('onboard') === '1';
   const { user, isLoading: authLoading } = useAuth();
-  const teamId = Number(id);
 
   const [team, setTeam] = useState<any>(null);
   const [players, setPlayers] = useState<any[]>([]);
@@ -31,21 +30,34 @@ export default function AddPlayers() {
   const [registrationStatus, setRegistrationStatus] = useState<'pending' | 'paid' | 'cancelled' | null>(null);
   const [checkingPayment, setCheckingPayment] = useState(true);
   
-  // Check if current user is the team manager
-  // TeamSerializer returns 'manager' (from manager_user field)
-  // Check both formats for compatibility
+  // Check if current user is the team manager or organiser
   const managerId = team?.manager?.id || team?.manager_user?.id;
   const isManager = !!(user && team && managerId === user.id);
+  const isOrganiser = user?.is_staff || false;
   
-  // Managers can edit their team regardless of payment status
-  // Payment check will only apply when actually paying
-  const canEdit = isManager;
+  // Managers and organisers can edit their team regardless of payment status
+  const canEdit = isManager || isOrganiser;
 
   async function refresh() {
+    if (!slug) {
+      setErr('Invalid team slug');
+      setTeamLoading(false);
+      return;
+    }
     try {
       setTeamLoading(true);
-      const t = await getTeam(teamId);
+      // Try to get team by slug first
+      let t;
+      try {
+        t = await getTeamBySlug(slug);
+      } catch (e) {
+        // Fallback to ID if slug doesn't work
+        const teamIdNum = Number(slug);
+        if (isNaN(teamIdNum)) throw e;
+        t = await getTeam(teamIdNum);
+      }
       setTeam(t);
+      const teamId = t.id;
       const memberships = await listTeamPlayers({ team: teamId });
       setPlayers(memberships);
       
@@ -70,14 +82,14 @@ export default function AddPlayers() {
   }
 
   useEffect(() => {
-    if (!teamId) return;
+    if (!slug) return;
     refresh();
-  }, [teamId]); // Load team data when teamId changes
+  }, [slug]); // Load team data when slug changes
 
   // Re-fetch team when user becomes available (after auto-login)
   // This ensures we have the latest team data with manager_user linked
   useEffect(() => {
-    if (!authLoading && user && teamId) {
+    if (!authLoading && user && slug) {
       // User just became available, refresh team data to get updated manager_user
       // This is important after auto-login from registration
       const timer = setTimeout(() => {
@@ -85,7 +97,7 @@ export default function AddPlayers() {
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [authLoading, user?.id, teamId]); // Re-check when auth finishes loading or user ID changes
+  }, [authLoading, user?.id, slug]); // Re-check when auth finishes loading or user ID changes
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -99,8 +111,8 @@ export default function AddPlayers() {
         phone: f.phone?.trim() || '',
         position: f.position || '',
       });
-      await addPlayerToTeam({ team: teamId, player_id: p.id, number: f.number ? Number(f.number) : undefined });
-      setF({ first_name: '', last_name: '', email: '', phone: '', position: 'MID', number: '' });
+      await addPlayerToTeam({ team: team?.id, player_id: p.id, number: f.number ? Number(f.number) : undefined });
+      setF({ first_name: '', last_name: '', email: '', phone: '', position: undefined, number: '' });
       await refresh();
     } catch (ex: any) {
       setErr(ex?.message ?? 'Failed to add player');
@@ -144,7 +156,7 @@ export default function AddPlayers() {
                 ))}
               </ul>
             )}
-            <button onClick={()=>navigate(`/teams/${teamId}`)} className="btn-outline mt-4 w-full">Back to Team</button>
+            <button onClick={()=>navigate(`/teams/${slug || team?.slug || team?.id}`)} className="btn-outline mt-4 w-full">Back to Team</button>
           </div>
         </div>
       </div>
@@ -206,9 +218,10 @@ export default function AddPlayers() {
               <div className="grid grid-cols-2 gap-3">
                 <select 
                   className="w-full px-4 py-2 bg-zinc-900 border border-zinc-600 rounded-lg text-white focus:outline-none focus:border-yellow-500" 
-                  value={f.position} 
-                  onChange={e=>setF({...f, position:e.target.value})}
+                  value={f.position || ''} 
+                  onChange={e=>setF({...f, position:e.target.value || undefined})}
                 >
+                  <option value="">Position (Optional)</option>
                   <option value="GK">GK</option>
                   <option value="DEF">DEF</option>
                   <option value="MID">MID</option>
@@ -245,7 +258,7 @@ export default function AddPlayers() {
               </ul>
             )}
             <button 
-              onClick={()=>navigate(`/teams/${teamId}`)} 
+              onClick={()=>navigate(`/teams/${slug || team?.slug || team?.id}`)} 
               className="w-full mt-4 px-4 py-2 border border-zinc-600 text-gray-300 rounded-xl hover:bg-zinc-800 transition-all"
             >
               Finish

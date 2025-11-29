@@ -16,8 +16,10 @@ const Login: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Get the intended destination from state, default to dashboard
-  const from = (location.state as any)?.from?.pathname || '/dashboard';
+  // Get the intended destination from state, query parameter, or default to dashboard
+  const queryParams = new URLSearchParams(location.search);
+  const returnUrl = queryParams.get('returnUrl');
+  const from = (location.state as any)?.from?.pathname || returnUrl || '/dashboard';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +66,7 @@ const Login: React.FC = () => {
       {/* Login Card */}
       <div className="card max-w-md w-full">
         <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Login to Host</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Organiser Login</h1>
           <p className="text-gray-600">Access your tournament dashboard</p>
         </div>
 
@@ -120,14 +122,7 @@ const Login: React.FC = () => {
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-600">
-            Don't have an account?{' '}
-            <Link to="/signup" className="text-yellow-500 hover:text-yellow-600 font-medium">
-              Create account
-            </Link>
-          </p>
-        </div>
+        {/* Registration disabled in single organiser mode */}
       </div>
 
       {/* Back to Home */}

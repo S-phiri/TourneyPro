@@ -68,7 +68,7 @@ const SuccessAlert = ({ message }: { message: string }) => (
 );
 
 const EditTournament: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
@@ -77,8 +77,8 @@ const EditTournament: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null);
 
   const fetchData = async () => {
-    if (!id) {
-      setError('Tournament ID is required');
+    if (!slug) {
+      setError('Tournament slug is required');
       setLoading(false);
       return;
     }
@@ -89,7 +89,7 @@ const EditTournament: React.FC = () => {
 
       // Fetch both tournament and venues in parallel
       const [tournamentData, venuesData] = await Promise.all([
-        api<Tournament>(`/tournaments/${id}/`),
+        api<Tournament>(`/tournaments/by-slug/${slug}/`),
         api<Venue[]>('/venues/')
       ]);
 
@@ -104,10 +104,10 @@ const EditTournament: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, [id]);
+  }, [slug]);
 
   const handleSubmit = async (payload: Partial<Tournament>) => {
-    if (!id) return;
+    if (!tournament?.id) return;
 
     try {
       setError(null);
@@ -148,7 +148,8 @@ const EditTournament: React.FC = () => {
         published: (payload as any).published !== undefined ? (payload as any).published : tournament.published
       };
 
-      await api(`/tournaments/${id}/`, {
+      // Use tournament ID for API call (slug is for routing only)
+      const updatedTournament = await api<Tournament>(`/tournaments/${tournament.id}/`, {
         method: 'PUT',
         body: JSON.stringify(submitPayload)
       });
@@ -157,7 +158,12 @@ const EditTournament: React.FC = () => {
       
       // Navigate to tournament detail page after a short delay
       setTimeout(() => {
-        navigate(`/tournaments/${id}`);
+        // Navigate back using slug (or ID if slug not available)
+        if (updatedTournament.slug) {
+          navigate(`/tournaments/${updatedTournament.slug}`);
+        } else {
+          navigate(`/tournaments/${updatedTournament.id}`);
+        }
       }, 2000);
 
     } catch (err) {

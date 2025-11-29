@@ -30,7 +30,7 @@ def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0
         'matches_created', 'matches_simulated', and 'credentials'
     """
     # Check current registrations
-    current_count = tournament.registrations.count()
+    current_count = tournament.registrations.filter(status__in=['pending', 'paid']).count()
     
     # Allow adding players to existing teams even if tournament is full
     if num_teams == 0:
@@ -51,6 +51,19 @@ def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0
         # Calculate how many teams we can add
         available_slots = tournament.team_max - current_count
         teams_to_create = min(num_teams, available_slots)
+        
+        # Ensure we can create at least 1 team
+        if teams_to_create < 1 and num_teams > 0:
+            return {
+                'error': f'Cannot create teams. Available slots: {available_slots}, Requested: {num_teams}',
+                'teams_created': 0,
+                'managers_created': 0,
+                'registrations_created': 0,
+                'players_created': 0,
+                'matches_created': 0,
+                'matches_simulated': 0,
+                'credentials': []
+            }
     
     # Default players per team if not specified (11-15 players for a realistic team)
     if players_per_team == 0:
@@ -81,6 +94,18 @@ def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0
             status__in=['pending', 'paid']
         ).select_related('team')
         
+        if not registrations.exists():
+            return {
+                'error': 'No teams registered in tournament. Please register teams first.',
+                'teams_created': 0,
+                'managers_created': 0,
+                'registrations_created': 0,
+                'players_created': 0,
+                'matches_created': 0,
+                'matches_simulated': 0,
+                'credentials': []
+            }
+        
         for reg in registrations:
             team = reg.team
             # Check if team has players
@@ -91,6 +116,19 @@ def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0
                     'registration': reg,
                     'manager': team.manager_user if hasattr(team, 'manager_user') else None
                 })
+        
+        # If no teams need players, return early
+        if not teams_to_process:
+            return {
+                'error': 'All existing teams already have players.',
+                'teams_created': 0,
+                'managers_created': 0,
+                'registrations_created': 0,
+                'players_created': 0,
+                'matches_created': 0,
+                'matches_simulated': 0,
+                'credentials': []
+            }
     
     # Ensure connection is ready before starting transaction
     connection.ensure_connection()

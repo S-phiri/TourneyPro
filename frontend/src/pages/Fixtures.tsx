@@ -70,12 +70,12 @@ const Fixtures: React.FC = () => {
   const [editingMatch, setEditingMatch] = useState<Match | null>(null);
   const [showScoreModal, setShowScoreModal] = useState(false);
 
-  const { isOrganizer } = useAuth();
+  const { isOrganiser } = useAuth();
   const navigate = useNavigate();
 
   const fetchData = async () => {
-    if (!id && !slug) {
-      setError('Tournament ID or slug is missing.');
+    if (!slug) {
+      setError('Tournament slug is missing.');
       setLoading(false);
       return;
     }
@@ -84,14 +84,16 @@ const Fixtures: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // Fetch tournament by ID or slug
+      // Fetch tournament by slug, with fallback to ID if slug is numeric
       let tournamentData: Tournament;
-      if (id) {
-        tournamentData = await api<Tournament>(`/tournaments/${id}/`);
-      } else if (slug) {
-        tournamentData = await api<Tournament>(`/tournaments/by-slug/${slug}/`);
+      const isNumericId = /^\d+$/.test(slug);
+      
+      if (isNumericId) {
+        // If slug is numeric, try fetching by ID first
+        tournamentData = await api<Tournament>(`/tournaments/${slug}/`);
       } else {
-        throw new Error('Tournament ID or slug is required');
+        // Otherwise, fetch by slug
+        tournamentData = await api<Tournament>(`/tournaments/by-slug/${slug}/`);
       }
 
       // Update newMatch with tournament ID
@@ -143,20 +145,6 @@ const Fixtures: React.FC = () => {
     }
   };
 
-  const handleStartMatch = async () => {
-    if (!editingMatch) return;
-    
-    try {
-      await api(`/matches/${editingMatch.id}/start/`, {
-        method: 'POST',
-        body: JSON.stringify({})
-      });
-      fetchData(); // Refresh matches to get updated status
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start match');
-      throw err;
-    }
-  };
 
   const handleSaveScore = async (
     scores: { home: number; away: number }, 
@@ -311,7 +299,7 @@ const Fixtures: React.FC = () => {
         )}
 
         {/* Add Match Form (Organizer Only) */}
-        {isOrganizer && (
+        {isOrganiser && (
           <div className="mb-8">
             {!showAddMatch ? (
               <button
@@ -415,7 +403,7 @@ const Fixtures: React.FC = () => {
           {matches.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-gray-400 text-lg">No matches scheduled yet.</p>
-              {isOrganizer && (
+              {isOrganiser && (
                 <button
                   onClick={() => setShowAddMatch(true)}
                   className="mt-4 px-6 py-3 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl font-bold text-sm transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
@@ -425,46 +413,66 @@ const Fixtures: React.FC = () => {
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+              <table className="w-full min-w-[640px]">
                 <thead>
                   <tr className="border-b border-zinc-700">
-                    <th className="text-left py-4 px-4 font-bold text-white">Date & Time</th>
-                    <th className="text-left py-4 px-4 font-bold text-white">Home Team</th>
-                    <th className="text-center py-4 px-4 font-bold text-white">Score</th>
-                    <th className="text-left py-4 px-4 font-bold text-white">Away Team</th>
-                    <th className="text-left py-4 px-4 font-bold text-white">Pitch</th>
-                    {isOrganizer && <th className="text-left py-4 px-4 font-bold text-white">Actions</th>}
+                    <th className="text-left py-3 px-2 sm:py-4 sm:px-4 font-bold text-white text-xs sm:text-sm">Date & Time</th>
+                    <th className="text-left py-3 px-2 sm:py-4 sm:px-4 font-bold text-white text-xs sm:text-sm">Home Team</th>
+                    <th className="text-center py-3 px-2 sm:py-4 sm:px-4 font-bold text-white text-xs sm:text-sm">Score</th>
+                    <th className="text-left py-3 px-2 sm:py-4 sm:px-4 font-bold text-white text-xs sm:text-sm">Away Team</th>
+                    <th className="text-left py-3 px-2 sm:py-4 sm:px-4 font-bold text-white text-xs sm:text-sm hidden md:table-cell">Pitch</th>
+                    {isOrganiser && <th className="text-left py-3 px-2 sm:py-4 sm:px-4 font-bold text-white text-xs sm:text-sm">Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {matches.map((match) => (
                     <tr key={match.id} className="border-b border-zinc-700/50 hover:bg-zinc-800/30 transition-colors">
-                      <td className="py-4 px-4 text-gray-300">
-                        {formatDateTime(match.kickoff_at)}
+                      <td className="py-3 px-2 sm:py-4 sm:px-4 text-gray-300 text-xs sm:text-sm">
+                        <div className="flex flex-col">
+                          <span className="whitespace-nowrap">{formatDateTime(match.kickoff_at).split(',')[0]}</span>
+                          <span className="text-gray-500 text-xs">{formatDateTime(match.kickoff_at).split(',')[1]?.trim()}</span>
+                        </div>
                       </td>
-                      <td className="py-4 px-4 font-semibold text-white">
+                      <td className="py-3 px-2 sm:py-4 sm:px-4 font-semibold text-white text-xs sm:text-sm truncate max-w-[120px] sm:max-w-none">
                         {match.home_team.name}
                       </td>
-                      <td className="py-4 px-4 text-center">
-                        <span className="text-2xl font-black text-yellow-400">
+                      <td className="py-3 px-2 sm:py-4 sm:px-4 text-center">
+                        <span className="text-lg sm:text-2xl font-black text-yellow-400">
                           {match.home_score} - {match.away_score}
                         </span>
                       </td>
-                      <td className="py-4 px-4 font-semibold text-white">
+                      <td className="py-3 px-2 sm:py-4 sm:px-4 font-semibold text-white text-xs sm:text-sm truncate max-w-[120px] sm:max-w-none">
                         {match.away_team.name}
                       </td>
-                      <td className="py-4 px-4 text-gray-400">
+                      <td className="py-3 px-2 sm:py-4 sm:px-4 text-gray-400 text-xs sm:text-sm hidden md:table-cell">
                         {match.pitch || '-'}
                       </td>
-                      {isOrganizer && (
-                        <td className="py-4 px-4">
-                          <button
-                            onClick={() => handleUpdateScore(match.id)}
-                            className="px-4 py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-lg font-bold text-sm transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
-                          >
-                            ⚽ Update Score
-                          </button>
+                      {isOrganiser && (
+                        <td className="py-3 px-2 sm:py-4 sm:px-4">
+                          {match.status === 'finished' ? (
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-1 sm:px-3 sm:py-1 bg-green-500/20 text-green-400 rounded-lg text-xs sm:text-sm font-semibold border border-green-500/50 whitespace-nowrap">
+                                ✓ Finished
+                              </span>
+                              <button
+                                onClick={() => handleUpdateScore(match.id)}
+                                className="px-2 py-1 sm:px-3 sm:py-1.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-lg font-bold text-xs sm:text-sm transition-all shadow-lg shadow-blue-500/20 hover:-translate-y-0.5 whitespace-nowrap"
+                                title="Edit match score"
+                              >
+                                <span className="hidden sm:inline">Edit</span>
+                                <span className="sm:hidden">✏️</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleUpdateScore(match.id)}
+                              className="px-2 py-1.5 sm:px-4 sm:py-2 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-lg font-bold text-xs sm:text-sm transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5 whitespace-nowrap"
+                            >
+                              <span className="hidden sm:inline">Update Score</span>
+                              <span className="sm:hidden">Update</span>
+                            </button>
+                          )}
                         </td>
                       )}
                     </tr>
@@ -494,7 +502,6 @@ const Fixtures: React.FC = () => {
             (tournament?.format === 'combination' && editingMatch.pitch && !editingMatch.pitch.includes('Group'))
           }
           matchStatus={editingMatch.status}
-          onStartMatch={handleStartMatch}
         />
       )}
       </div>

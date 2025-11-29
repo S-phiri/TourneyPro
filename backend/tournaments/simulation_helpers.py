@@ -2,12 +2,14 @@
 Helper functions for simulating tournament matches round by round
 """
 from django.db import transaction
+from django.db.utils import OperationalError
 from django.utils import timezone
 from datetime import timedelta
 from tournaments.models import Match, Player, TeamPlayer, MatchScorer, MatchAssist, Team
 from collections import Counter
 import random
 import re
+import time
 
 
 def get_next_round_matches(tournament):
@@ -38,6 +40,10 @@ def get_next_round_matches(tournament):
     # For combinationB format, parse pitch field to get round numbers
     if is_combinationB:
         matches_by_round = {}
+        matches_without_pitch = []
+        matches_without_round = []
+        
+        print(f"  Processing {len(scheduled_matches)} scheduled matches for combinationB format...")
         
         for match in scheduled_matches:
             # Parse pitch field: "Group A - Round 1" → round 1
@@ -48,52 +54,211 @@ def get_next_round_matches(tournament):
                 if match_obj:
                     round_num = int(match_obj.group(1))
                 else:
-                    # Fallback: use date if round number not found
+                    # Match has pitch but no round number
+                    matches_without_round.append((match.id, match.pitch))
+                    # Try to use date as fallback
+                    if match.kickoff_at:
+                        # Group by date - first date = round 1, second date = round 2, etc.
+                        dates = sorted(set(m.kickoff_at.date() for m in scheduled_matches if m.kickoff_at))
+                        if dates and match.kickoff_at.date() in dates:
+                            round_num = dates.index(match.kickoff_at.date()) + 1
+                        else:
+                            round_num = 1
+                    else:
+                        round_num = 1
+            else:
+                # Match has no pitch field
+                matches_without_pitch.append((match.id, match.kickoff_at))
+                # Fallback to date-based grouping
+                if match.kickoff_at:
+                    dates = sorted(set(m.kickoff_at.date() for m in scheduled_matches if m.kickoff_at))
+                    if dates and match.kickoff_at.date() in dates:
+                        round_num = dates.index(match.kickoff_at.date()) + 1
+                    else:
+                        round_num = 1
+                else:
                     round_num = 1
-        
+            
             if round_num is None:
-                # Fallback to date-based grouping if pitch doesn't have round info
-                date_key = match.kickoff_at.date()
-                round_num = 1  # Default to round 1
+                round_num = 1  # Final fallback
             
             if round_num not in matches_by_round:
                 matches_by_round[round_num] = []
             matches_by_round[round_num].append(match)
         
+        # Log warnings for matches without proper pitch/round info
+        if matches_without_pitch:
+            print(f"  Warning: {len(matches_without_pitch)} matches have no pitch field (using date fallback)")
+        if matches_without_round:
+            print(f"  Warning: {len(matches_without_round)} matches have pitch but no round number:")
+            for match_id, pitch in matches_without_round[:3]:  # Show first 3
+                print(f"    Match {match_id}: pitch='{pitch}'")
+        
         if not matches_by_round:
             return (None, [], False)
         
-        # Get the earliest incomplete round
-        earliest_round = min(matches_by_round.keys())
-        round_matches = matches_by_round[earliest_round]
-        
-        # Determine round number based on completed rounds
-        completed_matches = Match.objects.filter(
+        # Get all finished matches to check which rounds are complete
+        finished_matches = Match.objects.filter(
             tournament=tournament,
             status='finished'
         )
         
-        if completed_matches.exists():
-            # Find the highest completed round number
-            completed_rounds = set()
-            for match in completed_matches:
-                if match.pitch:
-                    match_obj = re.search(r'Round\s+(\d+)', match.pitch, re.IGNORECASE)
-                    if match_obj:
-                        completed_rounds.add(int(match_obj.group(1)))
-            
-            if completed_rounds:
-                round_number = max(completed_rounds) + 1
+        # Build a map of round numbers to their total match count (finished + scheduled)
+        round_totals = {}  # {round_num: {'total': count, 'finished': count, 'scheduled': count}}
+        
+        # Count finished matches per round
+        for match in finished_matches:
+            if match.pitch:
+                match_obj = re.search(r'Round\s+(\d+)', match.pitch, re.IGNORECASE)
+                if match_obj:
+                    round_num = int(match_obj.group(1))
+                    if round_num not in round_totals:
+                        round_totals[round_num] = {'total': 0, 'finished': 0, 'scheduled': 0}
+                    round_totals[round_num]['finished'] += 1
+        
+        # Count scheduled matches per round and validate totals
+        for round_num, matches in matches_by_round.items():
+            if round_num not in round_totals:
+                round_totals[round_num] = {'total': 0, 'finished': 0, 'scheduled': 0}
+            round_totals[round_num]['scheduled'] = len(matches)
+            round_totals[round_num]['total'] = round_totals[round_num]['finished'] + round_totals[round_num]['scheduled']
+        
+        # Debug: Log all rounds found
+        print(f"  Debug: Rounds found in scheduled matches: {sorted(matches_by_round.keys())}")
+        total_scheduled = 0
+        for round_num in sorted(matches_by_round.keys()):
+            matches_count = len(matches_by_round[round_num])
+            finished_count = round_totals.get(round_num, {}).get('finished', 0)
+            total_count = round_totals.get(round_num, {}).get('total', matches_count + finished_count)
+            total_scheduled += matches_count
+            print(f"    Round {round_num}: {matches_count} scheduled, {finished_count} finished, {total_count} total expected")
+        
+        print(f"  Total scheduled matches: {total_scheduled} (out of {len(scheduled_matches)} total scheduled)")
+        
+        # Find the earliest incomplete round (has scheduled matches)
+        # A round is incomplete if it has scheduled matches
+        incomplete_rounds = [r for r in matches_by_round.keys() if len(matches_by_round[r]) > 0]
+        
+        if not incomplete_rounds:
+            return (None, [], False)
+        
+        # Get the earliest incomplete round
+        earliest_round = min(incomplete_rounds)
+        round_matches = matches_by_round[earliest_round]
+        
+        # Validate: Ensure we're only returning matches for the current round
+        # Filter out any matches that don't belong to this round (safety check)
+        validated_matches = []
+        invalid_rounds = []
+        matches_without_round = []
+        for match in round_matches:
+            if match.pitch:
+                match_obj = re.search(r'Round\s+(\d+)', match.pitch, re.IGNORECASE)
+                if match_obj:
+                    match_round = int(match_obj.group(1))
+                    if match_round == earliest_round:
+                        validated_matches.append(match)
+                    else:
+                        invalid_rounds.append((match_round, match.id, match.pitch))
+                else:
+                    # Match doesn't have a round number in pitch - include it but log warning
+                    matches_without_round.append((match.id, match.pitch))
+                    # Include matches without round numbers as they might be from the correct round
+                    # (based on date or other criteria)
+                    validated_matches.append(match)
             else:
-                round_number = earliest_round
+                # Match has no pitch field - include it but log warning
+                matches_without_round.append((match.id, None))
+                validated_matches.append(match)
+        
+        # Log detailed information about validation
+        if invalid_rounds:
+            print(f"  Warning: Found {len(invalid_rounds)} matches from different rounds:")
+            for round_num, match_id, pitch in invalid_rounds[:5]:  # Show first 5
+                print(f"    Match {match_id}: Round {round_num} (pitch: '{pitch}')")
+            if len(invalid_rounds) > 5:
+                print(f"    ... and {len(invalid_rounds) - 5} more")
+            print(f"  Filtering to Round {earliest_round} only.")
+        
+        if matches_without_round:
+            print(f"  Warning: Found {len(matches_without_round)} matches without round numbers in pitch:")
+            for match_id, pitch in matches_without_round[:5]:  # Show first 5
+                print(f"    Match {match_id}: pitch='{pitch}'")
+            if len(matches_without_round) > 5:
+                print(f"    ... and {len(matches_without_round) - 5} more")
+            print(f"  Including them as they may belong to Round {earliest_round}.")
+        
+        original_count = len(round_matches)
+        if not validated_matches:
+            # If validation failed, log and use original matches (shouldn't happen)
+            print(f"  Error: Round validation filtered out all {original_count} matches for round {earliest_round}.")
+            print(f"  This suggests matches have incorrect round numbers in their pitch field.")
+            # Still use original matches but log the issue
+            validated_matches = round_matches
         else:
-            round_number = earliest_round
+            if len(validated_matches) < original_count:
+                print(f"  Filtered {original_count - len(validated_matches)} matches from wrong rounds. Using {len(validated_matches)} matches for Round {earliest_round}.")
+            elif len(validated_matches) == original_count:
+                print(f"  All {len(validated_matches)} matches validated for Round {earliest_round}.")
+            round_matches = validated_matches
+        
+        # Use the actual round number from the matches
+        round_number = earliest_round
         
         # For combinationB, group stage matches have "Group" in pitch
         is_league_stage = True
         if round_matches and round_matches[0].pitch:
             if not round_matches[0].pitch.startswith('Group'):
                 is_league_stage = False
+        
+        # Log for debugging
+        print(f"\n{'='*60}")
+        print(f"get_next_round_matches: Tournament {tournament.id} - {tournament.name}")
+        print(f"  Format: {tournament.format} (combinationB: {is_combinationB})")
+        print(f"  Found Round {round_number} with {len(round_matches)} scheduled matches")
+        print(f"  Incomplete rounds found: {sorted(incomplete_rounds)}")
+        if round_number in round_totals:
+            print(f"  Round {round_number} totals: {round_totals[round_number]['finished']} finished, {round_totals[round_number]['scheduled']} scheduled, {round_totals[round_number]['total']} total")
+        
+        # Log match breakdown by group for this round
+        if round_matches:
+            matches_by_group = {}
+            for match in round_matches:
+                if match.pitch:
+                    # Extract group name (e.g., "Group A - Round 1" -> "Group A")
+                    group_match = re.search(r'Group\s+[A-Z]', match.pitch, re.IGNORECASE)
+                    if group_match:
+                        group_name = group_match.group(0)
+                        if group_name not in matches_by_group:
+                            matches_by_group[group_name] = []
+                        matches_by_group[group_name].append(match)
+            
+            print(f"  Matches in Round {round_number} by group:")
+            total_by_group = 0
+            for group_name, group_matches in sorted(matches_by_group.items()):
+                print(f"    {group_name}: {len(group_matches)} matches")
+                total_by_group += len(group_matches)
+            
+            # Safety check: ensure all matches are accounted for
+            if total_by_group != len(round_matches):
+                print(f"  WARNING: Match count mismatch! Group total: {total_by_group}, Round total: {len(round_matches)}")
+                print(f"  This suggests some matches don't have group names in their pitch field.")
+                matches_without_group = []
+                for match in round_matches:
+                    if not match.pitch or not re.search(r'Group\s+[A-Z]', match.pitch, re.IGNORECASE):
+                        matches_without_group.append(match)
+                if matches_without_group:
+                    print(f"    Found {len(matches_without_group)} matches without group names:")
+                    for match in matches_without_group[:3]:
+                        print(f"      Match {match.id}: pitch='{match.pitch}'")
+            
+            # Note: It's normal for some groups to finish earlier than others
+            # (e.g., 13 teams: Group A has 7 rounds, Group B has 5 rounds)
+            # So rounds 6-7 will only have matches from Group A
+            if len(matches_by_group) < 2 and round_number > 1:
+                print(f"  Note: Only {len(matches_by_group)} group(s) have matches in Round {round_number}")
+                print(f"  This is expected when groups have different numbers of rounds.")
+        print(f"{'='*60}\n")
         
         return (round_number, round_matches, is_league_stage)
     
@@ -174,26 +339,94 @@ def simulate_round(tournament):
             'message': 'No matches to simulate'
         }
     
+    # Safety check: Ensure all matches belong to the same round
+    # This prevents accidentally simulating multiple rounds at once
+    if round_matches:
+        first_match_round = None
+        for match in round_matches:
+            if match.pitch:
+                match_obj = re.search(r'Round\s+(\d+)', match.pitch, re.IGNORECASE)
+                if match_obj:
+                    match_round = int(match_obj.group(1))
+                    if first_match_round is None:
+                        first_match_round = match_round
+                    elif match_round != first_match_round:
+                        # Found matches from different rounds - filter to only first round
+                        print(f"  Warning: Found matches from different rounds! Filtering to Round {first_match_round} only.")
+                        round_matches = [m for m in round_matches if 
+                                       m.pitch and re.search(r'Round\s+(\d+)', m.pitch, re.IGNORECASE) and 
+                                       int(re.search(r'Round\s+(\d+)', m.pitch, re.IGNORECASE).group(1)) == first_match_round]
+                        break
+        
+        if first_match_round and first_match_round != round_number:
+            print(f"  Warning: Round number mismatch. Updating from {round_number} to {first_match_round}")
+            round_number = first_match_round
+    
     matches_simulated = 0
     failed_matches = []
     
     # Simulate each match individually, continue even if some fail
-    for match in round_matches:
-        try:
-            # Use transaction for each match individually
-            with transaction.atomic():
-                simulate_match(match)
-                matches_simulated += 1
-        except Exception as e:
-            # Log the failed match but continue with others
-            failed_matches.append({
-                'match_id': match.id,
-                'home_team': match.home_team.name if match.home_team else 'Unknown',
-                'away_team': match.away_team.name if match.away_team else 'Unknown',
-                'error': str(e)
-            })
+    # Add retry logic for database locking issues (SQLite)
+    for idx, match in enumerate(round_matches):
+        max_retries = 3
+        retry_delay = 0.1  # Start with 100ms delay
+        
+        for attempt in range(max_retries):
+            try:
+                # Use transaction for each match individually
+                with transaction.atomic():
+                    simulate_match(match)
+                    matches_simulated += 1
+                    # Small delay between matches to prevent SQLite locking
+                    if idx < len(round_matches) - 1:  # Don't delay after last match
+                        time.sleep(0.05)  # 50ms delay between matches
+                    break  # Success, exit retry loop
+            except OperationalError as e:
+                # Database locked error - retry with exponential backoff
+                if "database is locked" in str(e).lower() or "locked" in str(e).lower():
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 0.1s, 0.2s, 0.4s
+                        wait_time = retry_delay * (2 ** attempt)
+                        print(f"  Database locked for match {match.id}, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        # Last attempt failed
+                        failed_matches.append({
+                            'match_id': match.id,
+                            'home_team': match.home_team.name if match.home_team else 'Unknown',
+                            'away_team': match.away_team.name if match.away_team else 'Unknown',
+                            'error': f"database is locked (failed after {max_retries} attempts): {str(e)}"
+                        })
+                        print(f"  Failed to simulate match {match.id} after {max_retries} attempts: database is locked")
+                else:
+                    # Other OperationalError - don't retry
+                    failed_matches.append({
+                        'match_id': match.id,
+                        'home_team': match.home_team.name if match.home_team else 'Unknown',
+                        'away_team': match.away_team.name if match.away_team else 'Unknown',
+                        'error': str(e)
+                    })
+                    break
+            except Exception as e:
+                # Other errors - log and continue
+                failed_matches.append({
+                    'match_id': match.id,
+                    'home_team': match.home_team.name if match.home_team else 'Unknown',
+                    'away_team': match.away_team.name if match.away_team else 'Unknown',
+                    'error': str(e)
+                })
+                break
     
     stage_name = "League Stage" if is_league_stage else "Knockout Stage"
+    
+    # After simulating a group stage round, standings are automatically updated
+    # (standings are calculated on-demand from match results, no explicit update needed)
+    # But we can log that standings should be recalculated
+    if is_league_stage and matches_simulated > 0:
+        print(f"Standings updated: {matches_simulated} matches simulated in {stage_name} Round {round_number}")
+        # Standings are calculated dynamically from match results when requested
+        # No explicit update needed - the standings endpoint calculates from current match data
     
     # After simulating a round, check if we need to generate next stage
     next_round_created = False
@@ -215,9 +448,16 @@ def simulate_round(tournament):
             if not unfinished_groups.exists() and group_matches.exists():
                 # All group stage matches complete - generate knockout stage
                 try:
+                    print(f"All group stage matches complete. Generating knockout stage...")
                     knockout_stage_started = generate_knockout_stage_from_groups(tournament)
+                    if knockout_stage_started:
+                        print(f"Knockout stage generated successfully")
+                    else:
+                        print(f"Knockout stage generation returned False (may already exist)")
                 except Exception as e:
                     print(f"Error generating knockout stage: {str(e)}")
+                    import traceback
+                    print(traceback.format_exc())
     
     # After simulating a knockout round, generate next round if applicable
     if not is_league_stage and matches_simulated > 0:
@@ -582,6 +822,60 @@ def generate_next_knockout_round(tournament, completed_round_name):
     return matches_created > 0
 
 
+def can_determine_group_qualifiers(tournament):
+    """
+    Check if group stage qualifiers (top 2 from each group) can be determined.
+    This checks if all group matches are finished.
+    
+    Returns:
+        bool: True if qualifiers can be determined, False otherwise
+    """
+    from .models import Match
+    from .tournament_formats import generate_groups
+    
+    # Only for combinationB format
+    if tournament.format != 'combination':
+        return False
+    
+    structure = tournament.structure or {}
+    combination_type = structure.get('combination_type', 'combinationA')
+    if combination_type != 'combinationB':
+        return False
+    
+    # Check if knockout stage already exists
+    knockout_matches = Match.objects.filter(
+        tournament=tournament
+    ).exclude(pitch__icontains='Group')
+    
+    if knockout_matches.exists():
+        return False  # Already generated
+    
+    # Get all teams
+    registrations = tournament.registrations.filter(status__in=['pending', 'paid']).select_related('team')
+    teams = [reg.team for reg in registrations]
+    
+    if len(teams) < 4:
+        return False
+    
+    # Get groups
+    groups = generate_groups(teams, "combinationB")
+    
+    # Get all group matches
+    all_group_matches = Match.objects.filter(
+        tournament=tournament,
+        pitch__icontains='Group'
+    )
+    
+    # Check if all group matches are finished
+    finished_group_matches = all_group_matches.filter(status='finished')
+    
+    # If all group matches are finished, qualifiers can be determined
+    if finished_group_matches.count() == all_group_matches.count() and all_group_matches.count() > 0:
+        return True
+    
+    return False
+
+
 def generate_knockout_stage_from_groups(tournament):
     """
     Generate knockout stage matches for combinationB tournaments after group stage completes.
@@ -666,6 +960,11 @@ def generate_knockout_stage_from_groups(tournament):
     matches_created = 0
     num_qualifiers = len(group_qualifiers) * 2  # Total number of qualifying teams
     
+    print(f"\n=== Generating Knockout Stage ===")
+    print(f"Number of groups: {len(group_qualifiers)}")
+    print(f"Number of qualifiers: {num_qualifiers}")
+    print(f"Group names: {group_names}")
+    
     # Determine proper round name based on number of teams
     if num_qualifiers >= 16:
         round_name = "Round of 16"
@@ -676,41 +975,58 @@ def generate_knockout_stage_from_groups(tournament):
     else:
         round_name = "Final"
     
+    print(f"Knockout round name: {round_name}")
+    
     # Pair adjacent groups: A vs B, C vs D, etc.
+    # For 2 groups: A 1st vs B 2nd, B 1st vs A 2nd (Semi-Finals)
+    # For 4 groups: A 1st vs B 2nd, B 1st vs A 2nd, C 1st vs D 2nd, D 1st vs C 2nd (Quarter-Finals)
     for i in range(0, len(group_names) - 1, 2):
         group1_name = group_names[i]
         group2_name = group_names[i + 1] if i + 1 < len(group_names) else None
         
         if group2_name:
+            group1_first = group_qualifiers[group1_name]['first']
+            group1_second = group_qualifiers[group1_name]['second']
+            group2_first = group_qualifiers[group2_name]['first']
+            group2_second = group_qualifiers[group2_name]['second']
+            
+            print(f"  Pairing {group1_name} vs {group2_name}:")
+            print(f"    Match 1: {group1_first.name} ({group1_name} 1st) vs {group2_second.name} ({group2_name} 2nd)")
+            print(f"    Match 2: {group2_first.name} ({group2_name} 1st) vs {group1_second.name} ({group1_name} 2nd)")
+            
             # Group 1 1st vs Group 2 2nd
             match1 = Match.objects.create(
                 tournament=tournament,
-                home_team=group_qualifiers[group1_name]['first'],
-                away_team=group_qualifiers[group2_name]['second'],
+                home_team=group1_first,
+                away_team=group2_second,
                 kickoff_at=knockout_start_date,
                 status='scheduled',
                 pitch=round_name
             )
             matches_created += 1
+            print(f"    ✓ Created match {match1.id}")
             
             # Group 2 1st vs Group 1 2nd
             match2 = Match.objects.create(
                 tournament=tournament,
-                home_team=group_qualifiers[group2_name]['first'],
-                away_team=group_qualifiers[group1_name]['second'],
+                home_team=group2_first,
+                away_team=group1_second,
                 kickoff_at=knockout_start_date,
                 status='scheduled',
                 pitch=round_name
             )
             matches_created += 1
+            print(f"    ✓ Created match {match2.id}")
     
     # If odd number of groups, handle the last group
     if len(group_names) % 2 == 1:
         last_group_name = group_names[-1]
+        print(f"  Warning: Odd number of groups ({len(group_names)}). Last group {last_group_name} not paired.")
         # Pair with previous group's second place (or create a bye)
         # For now, we'll pair it with the previous group's structure
         # This is a simplified approach - in real World Cup, groups are predetermined
     
+    print(f"=== Created {matches_created} knockout match(es) for {round_name} ===")
     return matches_created > 0
 
 
@@ -796,18 +1112,17 @@ def simulate_match(match):
     match.save()
     
     # Check if tournament should be marked as completed
-    all_matches = Match.objects.filter(tournament=match.tournament)
-    all_finished = all_matches.filter(status='finished').count()
-    total_matches = all_matches.count()
+    # Only mark as completed when the Final match is finished
+    match_pitch = match.pitch or ""
+    is_final_match = "final" in match_pitch.lower() and match_pitch.lower().strip() == "final"
     
-    # If all matches are finished, mark tournament as completed
-    if total_matches > 0 and all_finished == total_matches:
+    if is_final_match and match.status == 'finished':
         if match.tournament.status != 'completed':
             match.tournament.status = 'completed'
             match.tournament.save()
             print(f"\n{'='*60}")
             print(f"✓ Tournament '{match.tournament.name}' marked as COMPLETED")
-            print(f"  All {total_matches} matches finished")
+            print(f"  Final match finished")
             print(f"{'='*60}\n")
     
     # Create scorers and assisters

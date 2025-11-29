@@ -14,6 +14,8 @@ interface Match {
   awayTeam: Team;
   homeScore?: number;
   awayScore?: number;
+  homePenalties?: number | null;
+  awayPenalties?: number | null;
   status: "upcoming" | "live" | "completed";
   time?: string;
   pitch?: string;
@@ -23,7 +25,7 @@ interface KnockoutBracketProps {
   matches: Match[];
 }
 
-type TeamSlot = { name?: string; score?: number; team?: Team };
+type TeamSlot = { name?: string; score?: number; penalties?: number | null; team?: Team };
 
 type BracketMatch = {
   id: string;
@@ -73,11 +75,13 @@ const parseMatchesToBracket = (matches: Match[]): KnockoutBracketData => {
     home: {
       name: match.homeTeam?.name,
       score: match.homeScore,
+      penalties: match.homePenalties,
       team: match.homeTeam,
     },
     away: {
       name: match.awayTeam?.name,
       score: match.awayScore,
+      penalties: match.awayPenalties,
       team: match.awayTeam,
     },
     status: match.status,
@@ -90,11 +94,13 @@ const parseMatchesToBracket = (matches: Match[]): KnockoutBracketData => {
     home: {
       name: match.homeTeam?.name,
       score: match.homeScore,
+      penalties: match.homePenalties,
       team: match.homeTeam,
     },
     away: {
       name: match.awayTeam?.name,
       score: match.awayScore,
+      penalties: match.awayPenalties,
       team: match.awayTeam,
     },
     status: match.status,
@@ -108,11 +114,13 @@ const parseMatchesToBracket = (matches: Match[]): KnockoutBracketData => {
       home: {
         name: finalMatch.homeTeam?.name,
         score: finalMatch.homeScore,
+        penalties: finalMatch.homePenalties,
         team: finalMatch.homeTeam,
       },
       away: {
         name: finalMatch.awayTeam?.name,
         score: finalMatch.awayScore,
+        penalties: finalMatch.awayPenalties,
         team: finalMatch.awayTeam,
       },
       status: finalMatch.status,
@@ -149,10 +157,18 @@ const parseMatchesToBracket = (matches: Match[]): KnockoutBracketData => {
 const MatchCard = ({ match, roundLabel }: { match: BracketMatch; roundLabel: string }) => {
   const isCompleted = match.status === "completed";
   const isLive = match.status === "live";
+  const isDraw = match.home.score !== undefined && match.away.score !== undefined && 
+                 (match.home.score || 0) === (match.away.score || 0);
+  const homeWonOnPenalties = isCompleted && isDraw && match.home.penalties !== null && match.home.penalties !== undefined &&
+                             match.away.penalties !== null && match.away.penalties !== undefined &&
+                             (match.home.penalties || 0) > (match.away.penalties || 0);
+  const awayWonOnPenalties = isCompleted && isDraw && match.home.penalties !== null && match.home.penalties !== undefined &&
+                             match.away.penalties !== null && match.away.penalties !== undefined &&
+                             (match.away.penalties || 0) > (match.home.penalties || 0);
   const homeWon = isCompleted && match.home.score !== undefined && match.away.score !== undefined && 
-                  (match.home.score || 0) > (match.away.score || 0);
+                  ((match.home.score || 0) > (match.away.score || 0) || homeWonOnPenalties);
   const awayWon = isCompleted && match.home.score !== undefined && match.away.score !== undefined && 
-                  (match.home.score || 0) < (match.away.score || 0);
+                  ((match.home.score || 0) < (match.away.score || 0) || awayWonOnPenalties);
 
   return (
     <motion.div
@@ -186,13 +202,20 @@ const MatchCard = ({ match, roundLabel }: { match: BracketMatch; roundLabel: str
         ) : (
           <span className="text-gray-400 text-xs lg:text-sm font-medium">TBC</span>
         )}
-        <span
-          className={`text-lg lg:text-xl font-bold ${
-            homeWon ? "text-yellow-400" : "text-white"
-          }`}
-        >
-          {match.home.score !== undefined ? match.home.score : "-"}
-        </span>
+        <div className="flex flex-col items-end">
+          <span
+            className={`text-lg lg:text-xl font-bold ${
+              homeWon ? "text-yellow-400" : "text-white"
+            }`}
+          >
+            {match.home.score !== undefined ? match.home.score : "-"}
+          </span>
+          {match.home.penalties !== null && match.home.penalties !== undefined && (
+            <span className="text-xs text-yellow-400/80 font-semibold">
+              ({match.home.penalties})
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Away Team */}
@@ -212,13 +235,20 @@ const MatchCard = ({ match, roundLabel }: { match: BracketMatch; roundLabel: str
         ) : (
           <span className="text-gray-400 text-xs lg:text-sm font-medium">TBC</span>
         )}
-        <span
-          className={`text-lg lg:text-xl font-bold ${
-            awayWon ? "text-yellow-400" : "text-white"
-          }`}
-        >
-          {match.away.score !== undefined ? match.away.score : "-"}
-        </span>
+        <div className="flex flex-col items-end">
+          <span
+            className={`text-lg lg:text-xl font-bold ${
+              awayWon ? "text-yellow-400" : "text-white"
+            }`}
+          >
+            {match.away.score !== undefined ? match.away.score : "-"}
+          </span>
+          {match.away.penalties !== null && match.away.penalties !== undefined && (
+            <span className="text-xs text-yellow-400/80 font-semibold">
+              ({match.away.penalties})
+            </span>
+          )}
+        </div>
       </div>
 
       {isLive && (

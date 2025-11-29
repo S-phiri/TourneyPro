@@ -1,7 +1,37 @@
 // src/lib/api.ts
 import { getAuthToken, getRefreshToken, refresh as refreshToken, clearAuthToken, setAuthToken } from './auth';
 
-const BASE = import.meta.env.VITE_API_BASE_URL;
+// Auto-detect API base URL based on current hostname
+export function getApiBaseUrl(): string {
+  // Use environment variable if set
+  if (import.meta.env.VITE_API_BASE_URL) {
+    const envUrl = import.meta.env.VITE_API_BASE_URL;
+    // Ensure it ends with /api if not already
+    return envUrl.endsWith('/api') ? envUrl : `${envUrl}/api`;
+  }
+  
+  // Auto-detect based on current hostname
+  const hostname = window.location.hostname;
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
+  
+  let apiUrl: string;
+  if (isLocalhost) {
+    apiUrl = 'http://localhost:8000/api';
+  } else {
+    // Use the same hostname as the frontend, just change port to 8000
+    apiUrl = `http://${hostname}:8000/api`;
+  }
+  
+  // Debug logging (remove in production)
+  if (import.meta.env.DEV) {
+    console.log('[API] Detected hostname:', hostname);
+    console.log('[API] Using API base URL:', apiUrl);
+  }
+  
+  return apiUrl;
+}
+
+const BASE = getApiBaseUrl();
 
 export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers: HeadersInit = { 
@@ -17,11 +47,24 @@ export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
   // Note: Cache-Control header removed to avoid CORS issues
   // Backend should handle caching appropriately
   
-  let res = await fetch(`${BASE}${path}`, { 
-    ...opts, 
+  // Ensure body is properly handled (already stringified or will be stringified)
+  const fetchOpts: RequestInit = {
+    ...opts,
     headers,
     credentials: 'omit',
-  });
+  };
+  
+  // If body is already a string, use it directly; otherwise stringify if it's an object
+  if (opts.body && typeof opts.body !== 'string') {
+    try {
+      fetchOpts.body = JSON.stringify(opts.body);
+    } catch (e) {
+      // If stringify fails (circular reference), use the original body
+      fetchOpts.body = opts.body;
+    }
+  }
+  
+  let res = await fetch(`${BASE}${path}`, fetchOpts);
   
   // NEW: Handle token expiration - try to refresh and retry once
   if (res.status === 401 && token) {
@@ -34,11 +77,22 @@ export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
         headers['Authorization'] = `Bearer ${token}`;
         
         // Retry the request with new token
-        res = await fetch(`${BASE}${path}`, { 
-          ...opts, 
+        const retryOpts: RequestInit = {
+          ...opts,
           headers,
           credentials: 'omit'
-        });
+        };
+        
+        // Ensure body is properly handled for retry
+        if (opts.body && typeof opts.body !== 'string') {
+          try {
+            retryOpts.body = JSON.stringify(opts.body);
+          } catch (e) {
+            retryOpts.body = opts.body;
+          }
+        }
+        
+        res = await fetch(`${BASE}${path}`, retryOpts);
       }
     } catch (refreshError) {
       // Refresh failed, clear tokens and let the error propagate
@@ -48,7 +102,64 @@ export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
   }
   
   if (!res.ok) {
-    const errorText = await res.text();
+    let errorText = '';
+    try {
+      errorText = await res.text();
+      
+      // Check if response is HTML (Django error page)
+      if (errorText.trim().startsWith('<!DOCTYPE') || errorText.includes('<html')) {
+        // Try to extract error from HTML
+        const titleMatch = errorText.match(/<title>(.*?)<\/title>/i);
+        const h1Match = errorText.match(/<h1[^>]*>(.*?)<\/h1>/i);
+        const preMatch = errorText.match(/<pre[^>]*>(.*?)<\/pre>/is);
+        
+        if (titleMatch) {
+          errorText = titleMatch[1].replace(/Error at.*?:\s*/i, '').trim();
+        } else if (h1Match) {
+          errorText = h1Match[1].trim();
+        } else if (preMatch) {
+          errorText = preMatch[1].substring(0, 200).trim(); // Limit length
+        } else {
+          errorText = 'Server error occurred. Please try again.';
+        }
+      } else {
+        // Try to parse as JSON
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.detail) {
+            errorText = errorJson.detail;
+          } else if (errorJson.message) {
+            errorText = errorJson.message;
+          } else if (errorJson.team && errorJson.team.name) {
+            errorText = errorJson.team.name;
+          } else if (typeof errorJson === 'object') {
+            // Extract first error message from nested structure
+            const firstKey = Object.keys(errorJson)[0];
+            if (errorJson[firstKey]) {
+              if (typeof errorJson[firstKey] === 'string') {
+                errorText = errorJson[firstKey];
+              } else if (Array.isArray(errorJson[firstKey]) && errorJson[firstKey].length > 0) {
+                errorText = errorJson[firstKey][0];
+              } else if (typeof errorJson[firstKey] === 'object') {
+                const nestedKey = Object.keys(errorJson[firstKey])[0];
+                if (nestedKey && errorJson[firstKey][nestedKey]) {
+                  errorText = Array.isArray(errorJson[firstKey][nestedKey]) 
+                    ? errorJson[firstKey][nestedKey][0] 
+                    : errorJson[firstKey][nestedKey];
+                }
+              }
+            }
+          }
+        } catch {
+          // Keep original errorText if JSON parsing fails
+          if (errorText.length > 200) {
+            errorText = errorText.substring(0, 200) + '...';
+          }
+        }
+      }
+    } catch {
+      errorText = `HTTP ${res.status}: ${res.statusText}`;
+    }
     throw new Error(errorText || `HTTP ${res.status}: ${res.statusText}`);
   }
   
@@ -96,32 +207,28 @@ export async function registerTeamToTournament(
 }
 
 // Additional helpers for teams/players/matches
-export async function getTeam(id: number) {
-  const res = await fetch(`${BASE}/teams/${id}/`, { credentials: 'include' });
+export async function getTeam(idOrSlug: number | string) {
+  const res = await fetch(`${BASE}/teams/${idOrSlug}/`, { credentials: 'include' });
   if (!res.ok) throw new Error('Failed to fetch team');
   return res.json();
 }
 
+export async function getTeamBySlug(slug: string) {
+  return api<any>(`/teams/by-slug/${slug}/`);
+}
+
 export async function createPlayer(body: any) {
-  const res = await fetch(`${BASE}/players/`, {
+  return api<any>('/players/', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(body),
+    body: body,
   });
-  if (!res.ok) throw new Error('Failed to create player');
-  return res.json();
 }
 
 export async function addPlayerToTeam(body: any) {
-  const res = await fetch(`${BASE}/teamplayers/`, {
+  return api<any>('/teamplayers/', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify(body),
+    body: body,
   });
-  if (!res.ok) throw new Error('Failed to add player to team');
-  return res.json();
 }
 
 export async function listMatches(params?: Record<string, any>) {
@@ -409,23 +516,132 @@ export async function simulateRound(tournamentId: number) {
 }
 
 export async function clearFixtures(tournamentId: number): Promise<{ detail: string; matches_deleted: number }> {
-  const token = getAuthToken();
-  const headers: HeadersInit = { 'Content-Type': 'application/json' };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  const res = await fetch(`${BASE}/tournaments/${tournamentId}/clear-fixtures/`, {
+  return api<{ detail: string; matches_deleted: number }>(`/tournaments/${tournamentId}/clear-fixtures/`, {
     method: 'POST',
-    headers,
-    credentials: 'include',
   });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.detail || 'Failed to clear fixtures');
-  }
-  return res.json();
 }
 
 export async function debugKnockout(tournamentId: number): Promise<any> {
   return api<any>(`/tournaments/${tournamentId}/debug-knockout/`);
+}
+
+export async function resetTournament(tournamentId: number): Promise<{ 
+  detail: string; 
+  matches_deleted: number;
+  registrations_deleted: number;
+  teams_deleted: number;
+  team_players_deleted: number;
+  players_deleted: number;
+  tournament_id: number;
+  tournament_status: string;
+}> {
+  return api<{ 
+    detail: string; 
+    matches_deleted: number;
+    registrations_deleted: number;
+    teams_deleted: number;
+    team_players_deleted: number;
+    players_deleted: number;
+    tournament_id: number;
+    tournament_status: string;
+  }>(`/tournaments/${tournamentId}/reset-tournament/`, {
+    method: 'POST',
+  });
+}
+
+export async function resetMatches(tournamentId: number): Promise<{
+  detail: string;
+  matches_reset: number;
+  knockout_matches_deleted: number;
+  tournament_id: number;
+  tournament_status: string;
+}> {
+  return api<{
+    detail: string;
+    matches_reset: number;
+    knockout_matches_deleted: number;
+    tournament_id: number;
+    tournament_status: string;
+  }>(`/tournaments/${tournamentId}/reset-matches/`, {
+    method: 'POST',
+  });
+}
+
+export async function generateKnockouts(tournamentId: number): Promise<{
+  detail: string;
+  generated?: boolean;
+  already_generated?: boolean;
+  tournament_id: number;
+}> {
+  return api<{
+    detail: string;
+    generated?: boolean;
+    already_generated?: boolean;
+    tournament_id: number;
+  }>(`/tournaments/${tournamentId}/generate-knockouts/`, {
+    method: 'POST',
+  });
+}
+
+export async function fixFixtures(tournamentId: number): Promise<{
+  detail: string;
+  fixed_groups: Array<{ group: string; matches_deleted: number; matches_created: number }>;
+  matches_deleted: number;
+  matches_created: number;
+  skipped?: boolean;
+}> {
+  return api<{
+    detail: string;
+    fixed_groups: Array<{ group: string; matches_deleted: number; matches_created: number }>;
+    matches_deleted: number;
+    matches_created: number;
+    skipped?: boolean;
+  }>(`/tournaments/${tournamentId}/fix-fixtures/`, {
+    method: 'POST',
+  });
+}
+
+export async function getPlayersForMvp(tournamentId: number): Promise<{
+  players: Array<{
+    id: number;
+    first_name: string;
+    last_name: string;
+    full_name: string;
+    team_id: number;
+    team_name: string;
+    goals: number;
+    assists: number;
+    appearances: number;
+    mvp_score: number;
+  }>;
+}> {
+  return api<{
+    players: Array<{
+      id: number;
+      first_name: string;
+      last_name: string;
+      full_name: string;
+      team_id: number;
+      team_name: string;
+      goals: number;
+      assists: number;
+      appearances: number;
+      mvp_score: number;
+    }>;
+  }>(`/tournaments/${tournamentId}/players-for-mvp/`, {
+    method: 'GET',
+  });
+}
+
+export async function setTournamentMvp(tournamentId: number, playerId: number): Promise<{
+  detail: string;
+  mvp: any;
+}> {
+  return api<{
+    detail: string;
+    mvp: any;
+  }>(`/tournaments/${tournamentId}/set-mvp/`, {
+    method: 'POST',
+    body: { player_id: playerId },
+  });
 }

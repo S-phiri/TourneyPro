@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
-import { api, getTournamentStandings, getTournamentTopScorers, getTournamentTopAssists, generateFixtures, seedTestTeams, simulateRound, clearFixtures, debugKnockout } from '../lib/api';
+import { api, getTournamentStandings, getTournamentTopScorers, getTournamentTopAssists, generateFixtures, seedTestTeams, simulateRound, clearFixtures, debugKnockout, resetTournament, resetMatches, generateKnockouts, fixFixtures, createPlayer, addPlayerToTeam } from '../lib/api';
 import { Tournament } from '../types/tournament';
 import { Match } from '../lib/matches';
 import { Registration } from '../lib/registrations';
@@ -22,6 +22,7 @@ import MobileStickyCTA from '../components/tournament/MobileStickyCTA';
 import CapacityBar from '../components/tournament/CapacityBar';
 import TournamentNav from '../components/tournament/TournamentNav';
 import Markdown from '../lib/markdown';
+import AddTeamModal from '../components/tournament/AddTeamModal';
 
 // Loading spinner component
 const LoadingSpinner = () => (
@@ -60,11 +61,11 @@ const ErrorAlert = ({ message, onRetry }: { message: string; onRetry: () => void
 );
 
 const TournamentDetail: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   // NEW: Pull auth state to gate manager registration
-  const { isOrganizer, getTournamentRole, user, isAuthenticated, roleHint, isLoading: authLoading } = useAuth();
+  const { isOrganizer, isOrganiser, getTournamentRole, user, isAuthenticated, roleHint, isLoading: authLoading } = useAuth();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
@@ -78,8 +79,8 @@ const TournamentDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const fetchTournament = async () => {
-    if (!id) {
-      setError('Tournament ID is required');
+    if (!slug) {
+      setError('Tournament slug is required');
       setLoading(false);
       return;
     }
@@ -88,18 +89,32 @@ const TournamentDetail: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // Fetch tournament details
-      const tournamentData = await api<Tournament>(`/tournaments/${id}/`);
+      // Fetch tournament details - handle both slug and ID
+      let tournamentData: Tournament;
+      const slugIsNumeric = /^\d+$/.test(slug);
+      
+      if (slugIsNumeric) {
+        // If slug looks like a number, fetch by ID
+        tournamentData = await api<Tournament>(`/tournaments/${slug}/`);
+        // If we got data but it has a slug, navigate to the slug URL
+        if (tournamentData?.slug && tournamentData.slug !== slug) {
+          window.history.replaceState(null, '', `/tournaments/${tournamentData.slug}`);
+        }
+      } else {
+        // If slug looks like a slug, use by-slug endpoint
+        tournamentData = await api<Tournament>(`/tournaments/by-slug/${slug}/`);
+      }
       setTournament(tournamentData);
 
-      // Fetch related data in parallel
+      // Fetch related data in parallel (use tournament ID after fetching)
+      const tournamentId = tournamentData.id;
       const [registrationsData, matchesData, standingsData, scorersData, assistersData, roleData] = await Promise.all([
-        listRegistrations(parseInt(id)),
-        listMatches(parseInt(id)),
-        getTournamentStandings(parseInt(id)).catch(() => []),
-        getTournamentTopScorers(parseInt(id)).catch(() => []),
-        getTournamentTopAssists(parseInt(id)).catch(() => []), // NEW: Fetch top assists
-        getTournamentRole(parseInt(id)).catch(() => ({ is_organiser: false, is_manager: false }))
+        listRegistrations(tournamentId),
+        listMatches(tournamentId),
+        getTournamentStandings(tournamentId).catch(() => []),
+        getTournamentTopScorers(tournamentId).catch(() => []),
+        getTournamentTopAssists(tournamentId).catch(() => []), // NEW: Fetch top assists
+        getTournamentRole(tournamentId).catch(() => ({ is_organiser: false, is_manager: false }))
       ]);
 
       setRegistrations(registrationsData);
@@ -136,7 +151,7 @@ const TournamentDetail: React.FC = () => {
     if (!authLoading) {
     fetchTournament();
     }
-  }, [id, authLoading]);
+  }, [slug, authLoading]);
 
   // Safe helpers
   const toStr = (v: any) => (v == null ? "" : String(v));
@@ -145,60 +160,85 @@ const TournamentDetail: React.FC = () => {
   const fmtDate = (s?: string) =>
     s ? new Date(s).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' }) : 'TBC';
 
-  const handleRegisterTeam = () => {
-    if (!id) return;
-    // NEW: Use slug if available, otherwise fall back to ID
-    const tournamentSlug = tournament?.slug;
-    const registrationPath = tournamentSlug 
-      ? `/t/${tournamentSlug}/register`
-      : `/tournaments/${id}/register`;
+  const [showAddTeamModal, setShowAddTeamModal] = useState(false);
 
-    // NEW: If manager already registered, show message instead of navigating
-    if (tournamentRole?.is_manager) {
-      // Find their team
-      const managerTeam = arr(registrations).find((reg: any) => {
-        const managerId = reg?.team?.manager_user?.id || reg?.team?.manager?.id;
-        return managerId === user?.id;
+  const handleAddTeam = async (
+    teamName: string, 
+    managerName?: string, 
+    managerEmail?: string,
+    players?: Array<{first_name: string, last_name: string, position?: string, number?: string}>
+  ) => {
+    // Organiser-only: Add team directly
+    if (!isOrganiser || !tournament?.id) return;
+    
+    try {
+      // Call the register endpoint (now organiser-only) to add team
+      const response = await api<any>(`/tournaments/${tournament.id}/register/`, {
+        method: 'POST',
+        body: {
+          team: {
+            name: teamName,
+            manager_name: managerName || '',
+            manager_email: managerEmail || ''
+          }
+        }
       });
       
-      if (managerTeam?.team?.id) {
-        navigate(`/teams/${managerTeam.team.id}`);
-        return;
+      // If players are provided, create them and add to the team
+      if (players && players.length > 0 && response.team_id) {
+        const teamId = response.team_id;
+        
+        // Create players sequentially to avoid race conditions
+        for (const playerData of players) {
+          try {
+            // Create the player
+            const player = await createPlayer({
+              first_name: playerData.first_name.trim(),
+              last_name: playerData.last_name.trim(),
+              email: '',
+              phone: '',
+              position: playerData.position || ''
+            });
+            
+            // Add player to team
+            await addPlayerToTeam({
+              team: teamId,
+              player_id: player.id,
+              number: playerData.number ? Number(playerData.number) : undefined
+            });
+          } catch (playerError: any) {
+            // Log error but don't fail the entire operation
+            console.error(`Failed to add player ${playerData.first_name} ${playerData.last_name}:`, playerError);
+            // Continue with next player
+          }
+        }
       }
+      
+      fetchTournament(); // Refresh tournament data
+    } catch (err: any) {
+      // Safely extract error message without circular references
+      let errorMessage = 'Failed to add team';
+      if (err) {
+        if (typeof err === 'string') {
+          errorMessage = err;
+        } else if (err.message) {
+          errorMessage = String(err.message);
+        } else if (err.toString && typeof err.toString === 'function') {
+          try {
+            errorMessage = err.toString();
+          } catch {
+            errorMessage = 'Failed to add team';
+          }
+        }
+      }
+      throw new Error(errorMessage);
     }
-
-    // NEW: Force managers to be signed in before registering
-    if (!isAuthenticated) {
-      navigate('/manager/login', {
-        state: {
-          from: { pathname: registrationPath },
-          message: 'Sign in as a manager to register your team.',
-        },
-      });
-      return;
-    }
-
-    if (roleHint !== 'manager') {
-      navigate(`/manager/signup?redirect=${encodeURIComponent(registrationPath)}`, {
-        state: {
-          from: { pathname: registrationPath },
-          message: 'Create a manager account before registering a team.',
-        },
-      });
-      return;
-    }
-
-    navigate(registrationPath);
   };
 
   const handleManageFixtures = () => {
     // NEW: Use slug if available
     const tournamentSlug = tournament?.slug;
-    if (tournamentSlug) {
-      navigate(`/t/${tournamentSlug}/fixtures`);
-    } else {
-      navigate(`/tournaments/${id}/fixtures`);
-    }
+    navigate(`/tournaments/${slug}/fixtures`);
   };
 
   // Show loading spinner while auth is loading or tournament is loading
@@ -245,19 +285,19 @@ const TournamentDetail: React.FC = () => {
 
   const fixtures = arr(upcomingMatches)
     .map(match => ({
-      id: toStr(match?.id),
-      time: match?.kickoff_at ? new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'TBC',
-      pitch: toStr(match?.pitch) || 'TBA',
-      homeTeam: {
-        id: toStr(match?.home_team?.id),
-        name: toStr(match?.home_team?.name),
-        initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
-      },
-      awayTeam: {
-        id: toStr(match?.away_team?.id),
-        name: toStr(match?.away_team?.name),
-        initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
-      },
+    id: toStr(match?.id),
+    time: match?.kickoff_at ? new Date(match.kickoff_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : 'TBC',
+    pitch: toStr(match?.pitch) || 'TBA',
+    homeTeam: {
+      id: toStr(match?.home_team?.id),
+      name: toStr(match?.home_team?.name),
+      initials: toStr(match?.home_team?.name).substring(0, 2).toUpperCase()
+    },
+    awayTeam: {
+      id: toStr(match?.away_team?.id),
+      name: toStr(match?.away_team?.name),
+      initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
+    },
       status: 'upcoming' as const,
       kickoff_at: match?.kickoff_at // Keep original date for sorting
     }))
@@ -283,15 +323,15 @@ const TournamentDetail: React.FC = () => {
       name: toStr(match?.away_team?.name),
       initials: toStr(match?.away_team?.name).substring(0, 2).toUpperCase()
     },
-      homeScore: match?.home_score ?? 0,
-      awayScore: match?.away_score ?? 0,
-      homePenalties: match?.home_penalties ?? null,
-      awayPenalties: match?.away_penalties ?? null,
-      status: 'live' as const,
-      startedAt: match?.started_at,
-      durationMinutes: match?.duration_minutes,
-      scorers: match?.scorers || []
-    }));
+    homeScore: match?.home_score ?? 0,
+    awayScore: match?.away_score ?? 0,
+    homePenalties: match?.home_penalties ?? null,
+    awayPenalties: match?.away_penalties ?? null,
+    status: 'live' as const,
+    startedAt: match?.started_at,
+    durationMinutes: match?.duration_minutes,
+    scorers: match?.scorers || []
+  }));
 
   const results = arr(completedMatches)
     .map(match => ({
@@ -433,9 +473,9 @@ const TournamentDetail: React.FC = () => {
         status={tournamentStatus}
         venueName={toStr(tournament.venue?.name) || toStr(tournament.city)}
         mapLink={toStr(tournament.venue?.map_link)}
-        onCTAClick={handleRegisterTeam}
-        ctaDisabled={tournamentRole?.is_manager === true}
-        ctaText={tournamentRole?.is_manager ? "View Your Team" : "Register Your Team"}
+        onCTAClick={isOrganiser ? () => setShowAddTeamModal(true) : undefined}
+        ctaDisabled={!isOrganiser}
+        ctaText={isOrganiser ? "Add Team" : undefined}
       />
 
       {/* Live Ticker */}
@@ -448,19 +488,9 @@ const TournamentDetail: React.FC = () => {
             <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-4">
               {/* Role Pill */}
               <div className="flex items-center gap-3">
-                {tournamentRole.is_organiser && (
+                {isOrganiser && (
                   <span className="px-4 py-2 bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border border-yellow-500/50 rounded-full text-yellow-400 font-semibold text-sm">
                     Organiser
-                  </span>
-                )}
-                    {tournamentRole.is_manager && !tournamentRole.is_organiser && (
-                      <span className="px-4 py-2 bg-gradient-to-r from-yellow-500/20 to-yellow-600/20 border border-yellow-500/50 rounded-full text-yellow-400 font-semibold text-sm">
-                        Manager
-                      </span>
-                    )}
-                {!tournamentRole.is_organiser && !tournamentRole.is_manager && user && (
-                  <span className="px-4 py-2 bg-gradient-to-r from-gray-500/20 to-gray-600/20 border border-gray-500/50 rounded-full text-gray-400 font-semibold text-sm">
-                    Viewer
                   </span>
                 )}
               </div>
@@ -474,7 +504,7 @@ const TournamentDetail: React.FC = () => {
                      tournament.format === 'combination' ? 'Combination' : 
                      tournament.format === 'league' ? 'League (Round-Robin)' : 
                      tournament.format || 'Not Set'}
-                  </span>
+                      </span>
                   {tournament.format === 'league' && (
                     <span className="text-xs text-yellow-400">⚠️ All teams play each other</span>
                   )}
@@ -482,13 +512,13 @@ const TournamentDetail: React.FC = () => {
               </div>
 
               {/* Organiser Actions */}
-              {tournamentRole.is_organiser && (
+              {isOrganiser && (
                 <div className="w-full">
                   {/* Main Actions */}
                   <div className="flex flex-wrap gap-2 sm:gap-3 mb-4">
                   <button
                     onClick={() => {
-                      navigate(`/tournaments/${id}/edit`);
+                      navigate(`/tournaments/${slug}/edit`);
                     }}
                     className="px-4 sm:px-5 py-2 sm:py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-xl text-white text-xs sm:text-sm font-medium transition-all shadow-lg hover:shadow-zinc-800/20 hover:-translate-y-0.5"
                   >
@@ -534,7 +564,10 @@ const TournamentDetail: React.FC = () => {
                           }
                           
                           try {
-                            await generateFixtures(parseInt(id!));
+                            if (!tournament?.id) {
+                              throw new Error('Tournament ID not available');
+                            }
+                            await generateFixtures(tournament.id);
                             alert('✓ Fixtures generated successfully!');
                             fetchTournament();
                           } catch (err: any) {
@@ -572,7 +605,7 @@ const TournamentDetail: React.FC = () => {
                          tournament.status === 'closed' ? '✗ Closed' : 
                          'Draft'}
                       </span>
-                      {tournament.status !== 'completed' && isOrganizer && (
+                      {tournament.status !== 'completed' && isOrganiser && (
                         <button
                           onClick={async () => {
                             const allMatches = arr(matches);
@@ -596,7 +629,13 @@ const TournamentDetail: React.FC = () => {
                             }
                             
                             try {
-                              await api(`/tournaments/${id}/`, {
+                              // Use tournament ID for API call (slug is for routing only)
+                              const tournamentId = tournament?.id;
+                              if (!tournamentId) {
+                                alert('Tournament ID not found');
+                                return;
+                              }
+                              await api(`/tournaments/${tournamentId}/`, {
                                 method: 'PATCH',
                                 body: JSON.stringify({ status: 'completed' })
                               });
@@ -620,7 +659,8 @@ const TournamentDetail: React.FC = () => {
                     </p>
                   </div>
 
-                  {/* Testing & Simulation Tools - Always Visible Section */}
+                  {/* Testing & Simulation Tools - Hidden in Production */}
+                  {(import.meta.env.VITE_SHOW_TESTING !== 'false' && import.meta.env.MODE !== 'production') && (
                   <div className="w-full mt-6 pt-6 border-t-2 border-yellow-500/30 bg-zinc-900/30 rounded-lg p-4">
                     <h3 className="text-lg font-bold text-yellow-400 mb-4 flex items-center gap-2">
                       <span>🧪</span>
@@ -643,8 +683,12 @@ const TournamentDetail: React.FC = () => {
                               alert(`Tournament is full (${currentTeams}/${maxTeams}). Cannot add more teams.`);
                               return;
                             }
+                            if (!tournament?.id) {
+                              alert('Tournament not loaded');
+                              return;
+                            }
                             try {
-                              const result = await addOneTestTeam(parseInt(id!));
+                              const result = await addOneTestTeam(tournament.id);
                               alert(`✓ Successfully added 1 test team!\n\nTeam: ${result.teams_created > 0 ? 'Created' : 'Added'}\nManager password: test1234`);
                               await new Promise(resolve => setTimeout(resolve, 500));
                               fetchTournament();
@@ -667,8 +711,12 @@ const TournamentDetail: React.FC = () => {
                             if (!window.confirm(`Remove the most recently added team?\n\nThis will delete the team's registration.`)) {
                               return;
                             }
+                            if (!tournament?.id) {
+                              alert('Tournament not loaded');
+                              return;
+                            }
                             try {
-                              const result = await removeLastTeam(parseInt(id!));
+                              const result = await removeLastTeam(tournament.id);
                               alert(`✓ Removed team "${result.team_removed}"\n\nRemaining teams: ${result.remaining_teams}`);
                               await new Promise(resolve => setTimeout(resolve, 500));
                               fetchTournament();
@@ -684,14 +732,18 @@ const TournamentDetail: React.FC = () => {
                         </button>
                       </div>
                       
-                      {availableSlots > 0 && (
+                  {availableSlots > 0 && (
                     <button
                       onClick={async () => {
                         if (!window.confirm(`Create ${availableSlots} test teams to fill tournament capacity (${currentTeams}/${maxTeams})? This will create managers with password "test1234".`)) {
                           return;
                         }
+                        if (!tournament?.id) {
+                          alert('Tournament not loaded');
+                          return;
+                        }
                         try {
-                          const result = await seedTestTeams(parseInt(id!), { teams: availableSlots, paid: false, players: 0, simulate_games: false });
+                          const result = await seedTestTeams(tournament.id, { teams: availableSlots, paid: false, players: 0, simulate_games: false });
                           let message = `✓ Successfully created ${result.teams_created} test teams with ${result.players_created} players!\n\n`;
                           if (result.matches_created > 0) {
                             message += `✓ Generated ${result.matches_created} fixtures\n`;
@@ -715,8 +767,12 @@ const TournamentDetail: React.FC = () => {
                         if (!window.confirm(`Add 11-15 players to all teams that don't have players yet?`)) {
                           return;
                         }
+                        if (!tournament?.id) {
+                          alert('Tournament not loaded');
+                          return;
+                        }
                         try {
-                          const result = await seedTestTeams(parseInt(id!), { teams: 0, paid: false, players: 0, simulate_games: false });
+                          const result = await seedTestTeams(tournament.id, { teams: 0, paid: false, players: 0, simulate_games: false });
                           if (result.error) {
                             alert(result.error);
                           } else {
@@ -735,8 +791,12 @@ const TournamentDetail: React.FC = () => {
                     </button>
                     <button
                       onClick={async () => {
+                        if (!tournament?.id) {
+                          alert('Tournament not loaded');
+                          return;
+                        }
                         try {
-                          const result = await simulateRound(parseInt(id!));
+                          const result = await simulateRound(tournament.id);
                           if (result.round_number) {
                             const stage = result.is_league_stage ? 'League Stage' : 'Knockout Stage';
                             alert(`✓ ${result.message}\n\nRound ${result.round_number} (${stage}): ${result.matches_simulated} matches simulated`);
@@ -752,9 +812,9 @@ const TournamentDetail: React.FC = () => {
                     >
                         <span className="hidden sm:inline">Simulate Round ({upcomingMatches.length || arr(matches).filter((m: any) => m?.status === 'scheduled').length || 0} matches remaining)</span>
                         <span className="sm:hidden">Simulate ({upcomingMatches.length || arr(matches).filter((m: any) => m?.status === 'scheduled').length || 0})</span>
-                      </button>
-                      <button
-                        onClick={async () => {
+                    </button>
+                  <button
+                      onClick={async () => {
                           const matchCount = arr(matches).length;
                           if (matchCount === 0) {
                             alert('No fixtures to clear.');
@@ -773,8 +833,12 @@ const TournamentDetail: React.FC = () => {
                             return;
                           }
                           
+                          if (!tournament?.id) {
+                            alert('Tournament not loaded');
+                            return;
+                          }
                           try {
-                            const result = await clearFixtures(parseInt(id!));
+                            const result = await clearFixtures(tournament.id);
                             alert(`✓ ${result.detail || `Successfully deleted ${result.matches_deleted || matchCount} fixtures`}`);
                             fetchTournament();
                           } catch (err: any) {
@@ -787,11 +851,143 @@ const TournamentDetail: React.FC = () => {
                       >
                         <span className="hidden sm:inline">Clear Fixtures ({arr(matches).length || 0})</span>
                         <span className="sm:hidden">Clear ({arr(matches).length || 0})</span>
-                    </button>
-                  <button
+                  </button>
+                    <button
                         onClick={async () => {
+                          if (!tournament?.id) {
+                            alert('Tournament not loaded');
+                            return;
+                          }
+                          
+                          const matchCount = arr(matches).length;
+                          
+                          if (matchCount === 0) {
+                            alert('No matches to reset.');
+                            return;
+                          }
+                          
+                          const confirmMsg = `Reset all match results?\n\n` +
+                            `This will:\n` +
+                            `- Reset group match scores to 0-0\n` +
+                            `- Reset group match statuses to scheduled\n` +
+                            `- DELETE all knockout matches\n` +
+                            `- Clear all scorers and assists\n` +
+                            `- Reset team and player statistics\n` +
+                            `- Keep all teams and players\n\n` +
+                            `Continue?`;
+                          
+                          if (!window.confirm(confirmMsg)) {
+                            return;
+                          }
+                          
                           try {
-                            const result = await debugKnockout(parseInt(id!));
+                            const result = await resetMatches(tournament.id);
+                            let message = `✓ Match results reset!\n\n`;
+                            if (result.matches_reset > 0) {
+                              message += `- ${result.matches_reset} group matches reset\n`;
+                            }
+                            if (result.knockout_matches_deleted > 0) {
+                              message += `- ${result.knockout_matches_deleted} knockout matches deleted\n`;
+                            }
+                            message += `- Tournament status: ${result.tournament_status}\n\n`;
+                            message += `All teams and players have been preserved.`;
+                            alert(message);
+                            fetchTournament();
+                          } catch (err: any) {
+                            alert(`Failed to reset matches: ${err.message || 'Unknown error'}`);
+                          }
+                        }}
+                        className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-orange-600/30 hover:-translate-y-0.5 border-2 border-orange-500"
+                        title="Reset match results - clears scores and statistics but keeps teams and players"
+                    >
+                        <span className="hidden sm:inline">🔄 Reset Results</span>
+                        <span className="sm:hidden">🔄 Reset</span>
+                    </button>
+                    {/* Generate Knockouts Button - only for combinationB tournaments */}
+                    {tournament?.format === 'combination' && 
+                     tournament?.structure?.combination_type === 'combinationB' && 
+                     arr(matches).some((m: any) => m?.pitch?.includes('Group')) &&
+                     !arr(matches).some((m: any) => m?.pitch && !m?.pitch.includes('Group')) && (
+                      <button
+                        onClick={async () => {
+                          if (!tournament?.id) {
+                            alert('Tournament not loaded');
+                            return;
+                          }
+                          
+                          if (!window.confirm(`Generate knockout stage from group qualifiers?\n\nThis will:\n- Take top 2 teams from each group\n- Create knockout bracket matches\n- Use World Cup format pairings\n\nContinue?`)) {
+                            return;
+                          }
+                          
+                          try {
+                            const result = await generateKnockouts(tournament.id);
+                            if (result.already_generated) {
+                              alert('✓ Knockout stage already exists!');
+                            } else if (result.generated) {
+                              alert('✓ Knockout stage generated successfully!');
+                              fetchTournament();
+                            } else {
+                              alert(`Failed: ${result.detail}`);
+                            }
+                          } catch (err: any) {
+                            alert(`Failed to generate knockouts: ${err.message || 'Unknown error'}`);
+                          }
+                        }}
+                        className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-green-600/30 hover:-translate-y-0.5 border-2 border-green-500"
+                        title="Generate knockout stage from group qualifiers"
+                      >
+                        <span className="hidden sm:inline">🏆 Generate Knockouts</span>
+                        <span className="sm:hidden">🏆 Knockouts</span>
+                      </button>
+                    )}
+                    {/* Fix Fixtures Button - for combinationB tournaments with existing fixtures */}
+                    {tournament?.format === 'combination' && 
+                     tournament?.structure?.combination_type === 'combinationB' && 
+                     arr(matches).length > 0 && (
+                      <button
+                        onClick={async () => {
+                          if (!tournament?.id) {
+                            alert('Tournament not loaded');
+                            return;
+                          }
+                          
+                          if (!window.confirm(`Fix incomplete fixtures?\n\nThis will:\n- Check all groups for completeness\n- Delete and regenerate matches for incomplete groups\n- Keep complete groups unchanged\n\nContinue?`)) {
+                            return;
+                          }
+                          
+                          try {
+                            const result = await fixFixtures(tournament.id);
+                            if (result.skipped) {
+                              alert(result.detail);
+                            } else {
+                              let message = `✓ ${result.detail}\n\n`;
+                              if (result.fixed_groups.length > 0) {
+                                message += `Fixed groups:\n${result.fixed_groups.map(g => `- ${g.group}: ${g.matches_created} matches created`).join('\n')}`;
+                              } else {
+                                message += 'All groups already have complete fixtures.';
+                              }
+                              alert(message);
+                              fetchTournament();
+                            }
+                          } catch (err: any) {
+                            alert(`Failed to fix fixtures: ${err.message || 'Unknown error'}`);
+                          }
+                        }}
+                        className="px-4 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg shadow-purple-600/30 hover:-translate-y-0.5 border-2 border-purple-500"
+                        title="Fix incomplete fixtures by regenerating missing matches"
+                      >
+                        <span className="hidden sm:inline">🔧 Fix Fixtures</span>
+                        <span className="sm:hidden">🔧 Fix</span>
+                      </button>
+                    )}
+                <button
+                        onClick={async () => {
+                          if (!tournament?.id) {
+                            alert('Tournament not loaded');
+                            return;
+                          }
+                          try {
+                            const result = await debugKnockout(tournament.id);
                             const roundsList = result.rounds ? Object.keys(result.rounds).join(', ') : 'None';
                             const generationResultStr = result.generation_result !== null && result.generation_result !== undefined
                               ? (typeof result.generation_result === 'object' 
@@ -824,31 +1020,14 @@ const TournamentDetail: React.FC = () => {
                       >
                         <span className="hidden sm:inline">Debug Knockout</span>
                         <span className="sm:hidden">Debug</span>
-                  </button>
+                </button>
                     </div>
                   </div>
+              )}
                 </div>
               )}
 
-              {/* Manager Actions */}
-              {tournamentRole.is_manager && !tournamentRole.is_organiser && (
-                <button
-                  onClick={() => {
-                    // Find the team this manager manages
-                    // Check both manager and manager_user for compatibility
-                    const managerTeam = arr(registrations).find((reg: any) => {
-                      const managerId = reg?.team?.manager?.id || reg?.team?.manager_user?.id;
-                      return managerId === user?.id;
-                    });
-                    if (managerTeam?.team?.id) {
-                      navigate(`/teams/${managerTeam.team.id}`);
-                    }
-                  }}
-                  className="px-5 py-2.5 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black rounded-xl text-sm font-bold transition-all shadow-lg shadow-yellow-500/20 hover:-translate-y-0.5"
-                >
-                  Manage Team
-                </button>
-              )}
+              {/* Manager role removed in single organiser mode */}
             </div>
           </div>
         </section>
@@ -928,20 +1107,15 @@ const TournamentDetail: React.FC = () => {
           assists: a.assists || 0,
           goals: a.goals || 0
         }))}
-        isOrganiser={tournamentRole?.is_organiser || false}
+        isOrganiser={isOrganiser}
         tournamentId={tournament?.id}
         tournament={tournament ? { id: tournament.id, status: tournament.status, slug: tournament.slug } : undefined}
-        onAddTeam={handleRegisterTeam}
+        onAddTeam={isOrganiser ? () => setShowAddTeamModal(true) : undefined}
         onAddMatch={handleManageFixtures}
         onUpdateScore={() => {
-          const tournamentSlug = tournament?.slug;
-          if (tournamentSlug) {
-            navigate(`/t/${tournamentSlug}/fixtures`);
-          } else {
-            navigate(`/tournaments/${id}/fixtures`);
-          }
+          navigate(`/tournaments/${slug}/fixtures`);
         }}
-        onViewTeam={(teamId) => navigate(`/teams/${teamId}`)}
+        onViewTeam={(teamSlugOrId) => navigate(`/teams/${teamSlugOrId}?tournament=${slug}`)}
         onRegistrationUpdate={fetchTournament}
       />
 
@@ -1036,15 +1210,21 @@ const TournamentDetail: React.FC = () => {
         whatsappNumber={whatsappNumber}
       />
 
-      {/* Mobile Sticky CTA - Only show if registration is open */}
-      {tournament.status === 'open' && (!tournament.registration_deadline || new Date(tournament.registration_deadline) > new Date()) && (
+      {/* Mobile Sticky CTA - Only show for organiser */}
+      {isOrganiser && (
         <MobileStickyCTA
           entryFee={formatCurrency(tournament.entry_fee)}
-          onRegisterClick={handleRegisterTeam}
-          disabled={tournamentRole?.is_manager === true}
-          buttonText={tournamentRole?.is_manager ? "View Your Team" : "Register Team"}
+          onRegisterClick={() => setShowAddTeamModal(true)}
+          buttonText="Add Team"
         />
       )}
+
+      {/* Add Team Modal */}
+      <AddTeamModal
+        isOpen={showAddTeamModal}
+        onClose={() => setShowAddTeamModal(false)}
+        onAddTeam={handleAddTeam}
+      />
       </div>
     </div>
   );

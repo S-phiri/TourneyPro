@@ -58,10 +58,54 @@ def get_top_scorer(tournament):
 
 def get_mvp(tournament):
     """
-    Get Most Valuable Player (highest goals + assists).
+    Get Most Valuable Player.
+    If a player has been manually selected by the organiser, return that player.
+    Otherwise, calculate MVP based on highest goals + assists.
     Formula: goals * 1 + assists * 1
     Tiebreaker: Most goals wins.
     """
+    # Check if MVP has been manually selected
+    structure = tournament.structure or {}
+    selected_mvp_id = structure.get('selected_mvp_player_id')
+    
+    if selected_mvp_id:
+        try:
+            player = Player.objects.get(id=selected_mvp_id)
+            # Verify player is in this tournament
+            team_ids = Team.objects.filter(
+                registrations__tournament=tournament,
+                registrations__status__in=['pending', 'paid']
+            ).values_list('id', flat=True)
+            
+            team_player = TeamPlayer.objects.filter(
+                player_id=selected_mvp_id,
+                team_id__in=team_ids
+            ).select_related('team').first()
+            
+            if team_player:
+                # Get player stats for display
+                matches = Match.objects.filter(tournament=tournament, status='finished')
+                goals = MatchScorer.objects.filter(match__in=matches, player=player).count()
+                assists = MatchAssist.objects.filter(match__in=matches, player=player).count()
+                
+                return {
+                    'player': {
+                        'id': player.id,
+                        'first_name': player.first_name,
+                        'last_name': player.last_name,
+                        'full_name': str(player)
+                    },
+                    'team': {
+                        'id': team_player.team.id,
+                        'name': team_player.team.name
+                    },
+                    'goals': goals,
+                    'assists': assists,
+                    'mvp_score': goals + assists
+                }
+        except Player.DoesNotExist:
+            pass  # Fall through to calculated MVP
+    
     matches = Match.objects.filter(tournament=tournament, status='finished')
     
     # Get all players who scored or assisted
@@ -567,44 +611,55 @@ def get_tournament_third_place(tournament):
 
 def get_clean_sheets_leader(tournament):
     """
-    Get goalkeeper with most clean sheets in tournament.
-    Returns dict with player info, team, and clean sheets count.
+    Get team with most clean sheets in tournament.
+    Returns dict with team info and clean sheets count.
     """
     # Get all teams in tournament
-    team_ids = Team.objects.filter(
+    teams = Team.objects.filter(
         registrations__tournament=tournament,
         registrations__status__in=['pending', 'paid']
-    ).values_list('id', flat=True)
+    ).distinct()
     
-    # Get goalkeepers from those teams, ordered by clean sheets
-    goalkeepers = Player.objects.filter(
-        memberships__team_id__in=team_ids,
-        position='GK',
-        clean_sheets__gt=0
-    ).order_by('-clean_sheets', 'first_name', 'last_name')
+    # Get all finished matches for this tournament
+    matches = Match.objects.filter(tournament=tournament, status='finished')
     
-    if not goalkeepers.exists():
+    # Calculate clean sheets per team
+    team_clean_sheets = {}
+    
+    for team in teams:
+        clean_sheets = 0
+        # Get all matches where this team played
+        team_matches = matches.filter(
+            Q(home_team=team) | Q(away_team=team)
+        )
+        
+        for match in team_matches:
+            # Check if team kept a clean sheet (conceded 0 goals)
+            if match.home_team == team:
+                if match.away_score == 0:
+                    clean_sheets += 1
+            else:  # away_team == team
+                if match.home_score == 0:
+                    clean_sheets += 1
+        
+        if clean_sheets > 0:
+            team_clean_sheets[team.id] = {
+                'team': team,
+                'clean_sheets': clean_sheets
+            }
+    
+    if not team_clean_sheets:
         return None
     
-    top_gk = goalkeepers.first()
-    
-    # Get player's team in this tournament
-    team_player = TeamPlayer.objects.filter(
-        player=top_gk,
-        team_id__in=team_ids
-    ).select_related('team').first()
+    # Get team with most clean sheets
+    top_team_data = max(team_clean_sheets.values(), key=lambda x: x['clean_sheets'])
+    top_team = top_team_data['team']
     
     return {
-        'player': {
-            'id': top_gk.id,
-            'first_name': top_gk.first_name,
-            'last_name': top_gk.last_name,
-            'full_name': f"{top_gk.first_name} {top_gk.last_name}".strip()
-        },
         'team': {
-            'id': team_player.team.id if team_player else None,
-            'name': team_player.team.name if team_player else 'Unknown'
-        } if team_player else None,
-        'clean_sheets': top_gk.clean_sheets or 0
+            'id': top_team.id,
+            'name': top_team.name
+        },
+        'clean_sheets': top_team_data['clean_sheets']
     }
 

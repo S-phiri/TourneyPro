@@ -10,7 +10,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # NEW: Use environment variables with fallbacks for development
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults')
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# NEW: Hosts
+if DEBUG:
+    # During development: allow everything (local testing, phone testing)
+    ALLOWED_HOSTS = ["*"]
+else:
+    # For production: also allow everything for the tournament day
+    # (you can lock it down next week if needed)
+    ALLOWED_HOSTS = ["*"]
+
+
 
 # Apps
 INSTALLED_APPS = [
@@ -70,20 +79,38 @@ DATABASES = {
 }
 
 # CORS setup so your React app can connect
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # your Vite dev server
-    "http://127.0.0.1:5173",
-]
+# For development, allow all origins on local network (192.168.x.x, 10.x.x.x, etc.)
+if DEBUG:
+    # In development, allow all origins for easier LAN testing
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:5173",  # your Vite dev server
+        "http://127.0.0.1:5173",
+        "http://192.168.1.80:5173",   # frontend via LAN
+        "http://192.168.1.80:3000",   # (add this too if you use CRA)
+    ]
 
 # Allow cookies/credentials from the frontend if needed
 CORS_ALLOW_CREDENTIALS = True
 
 # If you use CSRF/session on API endpoints during dev
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+if DEBUG:
+    # In development, allow all local network origins
+    CSRF_TRUSTED_ORIGINS = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://192.168.1.80:5173",   # frontend via LAN
+        "http://192.168.1.80:3000",   # (add this too if you use CRA)
+    ]
+else:
+    CSRF_TRUSTED_ORIGINS = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://192.168.1.80:5173",
+        "http://192.168.1.80:3000",
+    ]
 
 # Optional CORS header tuning
 CORS_ALLOW_HEADERS = [

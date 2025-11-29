@@ -15,6 +15,16 @@ interface TeamFormData {
   note: string;
 }
 
+// Helper to check if registration deadline has passed
+const isDeadlinePassed = (deadline: string | null | undefined): boolean => {
+  if (!deadline) return false;
+  const deadlineDate = new Date(deadline);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  deadlineDate.setHours(23, 59, 59, 999);
+  return today > deadlineDate;
+};
+
 interface FormErrors {
   name?: string;
   manager_name?: string;
@@ -56,7 +66,7 @@ const RegisterTeam: React.FC = () => {
     const targetPath = id
       ? `/tournaments/${id}/register`
       : slug
-        ? `/t/${slug}/register`
+        ? `/tournaments/${slug}/register`
         : location.pathname;
 
     if (!isAuthenticated) {
@@ -139,13 +149,9 @@ const RegisterTeam: React.FC = () => {
       newErrors.name = 'Team name is required';
     }
     
-    if (!formData.manager_name.trim()) {
-      newErrors.manager_name = 'Manager name is required';
-    }
-    
-    if (!formData.manager_email.trim()) {
-      newErrors.manager_email = 'Email is required';
-    } else if (!validateEmail(formData.manager_email)) {
+    // Manager fields are now optional (organizer can register teams without managers)
+    // Only validate email format if provided
+    if (formData.manager_email.trim() && !validateEmail(formData.manager_email)) {
       newErrors.manager_email = 'Please enter a valid email address';
     }
     
@@ -244,11 +250,14 @@ const RegisterTeam: React.FC = () => {
         window.dataLayer.push({ event: 'team_register_success' });
       }
       
-      // NEW: Automatically redirect to the tournament page after 2 seconds
+      // Automatically redirect to the tournament page after 2 seconds
       setTimeout(() => {
-        if (slug) {
-          navigate(`/t/${slug}?registered=1`);
+        // Use slug if available, otherwise use tournament slug from response
+        const redirectSlug = slug || tournament?.slug;
+        if (redirectSlug) {
+          navigate(`/tournaments/${redirectSlug}?registered=1`);
         } else if (tournamentId) {
+          // Fallback to ID if no slug (shouldn't happen with auto-generation)
           navigate(`/tournaments/${tournamentId}?registered=1`);
         }
       }, 2000);
@@ -295,8 +304,7 @@ const RegisterTeam: React.FC = () => {
     if (!tournament) return true;
     if (tournament.status !== 'open') return true;
     if (tournament.registration_deadline) {
-      const deadline = new Date(tournament.registration_deadline);
-      return new Date() > deadline;
+      return isDeadlinePassed(tournament.registration_deadline);
     }
     return false;
   };
@@ -390,7 +398,15 @@ const RegisterTeam: React.FC = () => {
               </button>
               
               <button 
-                onClick={() => navigate(tournament.id ? `/tournaments/${tournament.id}` : `/t/${slug}`)} 
+                onClick={() => {
+                  if (tournament?.slug) {
+                    navigate(`/tournaments/${tournament.slug}`);
+                  } else if (tournament?.id) {
+                    navigate(`/tournaments/${tournament.id}`);
+                  } else if (slug) {
+                    navigate(`/tournaments/${slug}`);
+                  }
+                }} 
                 className="btn-outline w-full"
               >
                 View Tournament
@@ -455,11 +471,47 @@ const RegisterTeam: React.FC = () => {
               
               {registrationClosed && (
                 <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <div className="flex items-center space-x-2">
-                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="flex items-start space-x-2">
+                    <svg className="w-5 h-5 text-red-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    <span className="text-red-800 font-medium">Registration is closed for this tournament</span>
+                    <div>
+                      <span className="text-red-800 font-medium block">Registration is closed for this tournament</span>
+                      {tournament.registration_deadline && (
+                        <span className="text-red-600 text-sm block mt-1">
+                          Registration deadline was: {formatDate(tournament.registration_deadline)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!registrationClosed && tournament.registration_deadline && (
+                <div className={`mb-6 p-4 border rounded-lg ${
+                  daysUntilDeadline !== null && daysUntilDeadline <= 3
+                    ? 'bg-yellow-50 border-yellow-200'
+                    : 'bg-blue-50 border-blue-200'
+                }`}>
+                  <div className="flex items-center space-x-2">
+                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <div>
+                      <span className="font-medium text-gray-800">Registration Deadline: {formatDate(tournament.registration_deadline)}</span>
+                      {daysUntilDeadline !== null && (
+                        <span className={`text-sm block mt-1 ${
+                          daysUntilDeadline <= 3 ? 'text-yellow-700 font-semibold' : 'text-gray-600'
+                        }`}>
+                          {daysUntilDeadline === 0 
+                            ? 'Last day to register!' 
+                            : daysUntilDeadline === 1
+                            ? 'Only 1 day remaining!'
+                            : `${daysUntilDeadline} days remaining`
+                          }
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -491,10 +543,10 @@ const RegisterTeam: React.FC = () => {
                   {errors.name && <p className="mt-1 text-sm text-red-600">{errors.name}</p>}
                 </div>
 
-                {/* Manager Name */}
+                {/* Manager Name - Optional */}
                 <div>
                   <label htmlFor="manager_name" className="block text-sm font-medium text-gray-700 mb-2">
-                    Manager Name <span className="text-red-500">*</span>
+                    Manager Name <span className="text-gray-400 text-xs">(Optional)</span>
                   </label>
                   <input
                     type="text"
@@ -504,17 +556,17 @@ const RegisterTeam: React.FC = () => {
                     onChange={handleChange}
                     onBlur={() => handleBlur('manager_name')}
                     className={`form-input w-full ${errors.manager_name ? 'border-red-500' : ''}`}
-                    placeholder="Enter manager's full name"
-                    required
+                    placeholder="Enter manager's full name (optional)"
                     disabled={loading || registrationClosed}
                   />
                   {errors.manager_name && <p className="mt-1 text-sm text-red-600">{errors.manager_name}</p>}
+                  <p className="mt-1 text-xs text-gray-500">Leave blank if organizer is registering teams</p>
                 </div>
 
-                {/* Manager Email */}
+                {/* Manager Email - Optional */}
                 <div>
                   <label htmlFor="manager_email" className="block text-sm font-medium text-gray-700 mb-2">
-                    Email <span className="text-red-500">*</span>
+                    Email <span className="text-gray-400 text-xs">(Optional)</span>
                   </label>
                   <input
                     type="email"
@@ -524,13 +576,15 @@ const RegisterTeam: React.FC = () => {
                     onChange={handleChange}
                     onBlur={() => handleBlur('manager_email')}
                     className={`form-input w-full ${errors.manager_email ? 'border-red-500' : ''}`}
-                    placeholder="Enter email address"
-                    required
+                    placeholder="Enter email address (optional)"
                     disabled={loading || registrationClosed || isManager}
                   />
                   {errors.manager_email && <p className="mt-1 text-sm text-red-600">{errors.manager_email}</p>}
                   {isManager && (
                     <p className="mt-1 text-xs text-gray-500">Using your signed-in manager account email.</p>
+                  )}
+                  {!isManager && (
+                    <p className="mt-1 text-xs text-gray-500">Leave blank if organizer is registering teams without manager accounts</p>
                   )}
                 </div>
 

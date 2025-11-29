@@ -11,6 +11,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   isAuthenticated: boolean;
   isOrganizer: boolean;
+  isOrganiser: boolean; // Alias for isOrganizer (single organiser mode)
   roleHint: 'host' | 'manager' | 'viewer' | null;
   getMe: () => Promise<void>;
   getTournamentRole: (tournamentId: number) => Promise<{ is_organiser: boolean; is_manager: boolean }>;
@@ -28,7 +29,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [isLoading, setIsLoading] = useState(true);
 
   const isAuthenticated = !!accessToken && !!user;
-  const isOrganizer = !!accessToken; // Any authenticated user can be an organizer
+  // In single organiser mode: check is_staff flag from backend
+  const isOrganizer = !!(user?.is_staff);
+  const isOrganiser = isOrganizer; // Alias
   const roleHint = user?.role_hint || null;
 
   // Initialize auth state on app load
@@ -112,6 +115,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     logout,
     isAuthenticated,
     isOrganizer,
+    isOrganiser,
     roleHint,
     getMe,
     getTournamentRole,

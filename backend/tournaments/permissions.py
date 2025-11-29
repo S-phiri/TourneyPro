@@ -2,6 +2,17 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 from .models import MatchReferee
 
+
+class IsOrganiser(BasePermission):
+    """
+    Permission class for single organiser mode.
+    Checks if user has is_staff=True (organiser flag).
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        return request.user.is_staff
+
 class IsOrganizerOrReadOnly(BasePermission):
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:

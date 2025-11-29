@@ -9,7 +9,7 @@ import GroupStandings from "./GroupStandings";
 import MatchStats from "./MatchStats";
 // NEW: Import KnockoutBracket component
 import KnockoutBracket from "./KnockoutBracket";
-import { markRegistrationPaid } from "../../lib/api";
+import { markRegistrationPaid, generateKnockouts } from "../../lib/api";
 
 interface Team {
   id: string;
@@ -211,7 +211,7 @@ export default function TournamentTabs({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className="relative px-8 py-4 text-white font-semibold whitespace-nowrap transition-colors hover:bg-zinc-800/50"
+              className="relative px-4 sm:px-8 py-3 sm:py-4 text-white font-semibold whitespace-nowrap transition-colors hover:bg-zinc-800/50 text-sm sm:text-base"
             >
               {tab.label}
               {activeTab === tab.id && (
@@ -258,7 +258,7 @@ export default function TournamentTabs({
                       <motion.div
                         key={team.id}
                         whileHover={{ scale: 1.02, y: -4 }}
-                        onClick={() => onViewTeam?.(team.id)}
+                        onClick={() => onViewTeam?.((team as any).slug || team.id)}
                         className={`bg-zinc-800/50 border border-zinc-700 rounded-lg p-5 transition-all hover:border-yellow-500/50 hover:bg-zinc-800/70 ${onViewTeam ? 'cursor-pointer' : ''}`}
                       >
                         <div className="mb-3 flex items-center justify-between">
@@ -519,26 +519,60 @@ export default function TournamentTabs({
                       >
                         Group Stage
                       </button>
-                      {hasKnockoutMatches && (
-                        <button
-                          onClick={() => setActiveStandingsTab('knockouts')}
-                          className={`px-4 py-2 font-medium transition-colors ${
-                            activeStandingsTab === 'knockouts'
-                              ? 'text-yellow-500 border-b-2 border-yellow-500'
-                              : 'text-gray-400 hover:text-white'
-                          }`}
-                        >
-                          Knockouts
-                        </button>
-                      )}
+                      {/* Always show Knockouts tab for combinationB tournaments */}
+                      <button
+                        onClick={() => setActiveStandingsTab('knockouts')}
+                        className={`px-4 py-2 font-medium transition-colors ${
+                          activeStandingsTab === 'knockouts'
+                            ? 'text-yellow-500 border-b-2 border-yellow-500'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        Knockouts
+                      </button>
                     </div>
                     
                     {activeStandingsTab === 'group' && standingsData?.format === 'groups' && (
                       <GroupStandings groups={(standingsData as GroupStandingsData).groups} />
                     )}
                     
-                    {activeStandingsTab === 'knockouts' && hasKnockoutMatches && (
-                      <KnockoutBracket matches={allMatches} />
+                    {activeStandingsTab === 'knockouts' && (
+                      <>
+                        {hasKnockoutMatches ? (
+                          <KnockoutBracket matches={allMatches} />
+                        ) : (
+                          <div className="text-center py-12 bg-zinc-800/30 border border-zinc-700 rounded-lg">
+                            <p className="text-gray-400 text-lg mb-4">
+                              Knockout stage will appear here once group stage qualifiers are determined.
+                            </p>
+                            {isOrganiser && tournament?.id && (
+                              <button
+                                onClick={async () => {
+                                  if (!window.confirm('Generate knockout stage from group qualifiers?')) {
+                                    return;
+                                  }
+                                  try {
+                                    const result = await generateKnockouts(tournament.id);
+                                    if (result.generated || result.already_generated) {
+                                      alert('✓ Knockout stage generated!');
+                                      if (onRegistrationUpdate) {
+                                        onRegistrationUpdate(); // Refresh data
+                                      }
+                                    } else {
+                                      alert(`Failed: ${result.detail}`);
+                                    }
+                                  } catch (err: any) {
+                                    alert(`Error: ${err.message || 'Unknown error'}`);
+                                  }
+                                }}
+                                className="px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-xl font-bold transition-all shadow-lg shadow-green-600/20 hover:-translate-y-0.5"
+                              >
+                                Generate Knockouts
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 );
@@ -564,20 +598,20 @@ export default function TournamentTabs({
                       <p className="text-gray-400 text-lg">No standings yet. Matches need to be played first.</p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
+                    <div className="overflow-x-auto -mx-8 px-8 sm:mx-0 sm:px-0">
+                      <table className="w-full min-w-[600px]">
                         <thead>
                           <tr className="border-b border-zinc-700">
-                            <th className="text-left text-gray-400 font-semibold py-3 px-4">Pos</th>
-                            <th className="text-left text-gray-400 font-semibold py-3 px-4">Team</th>
-                            <th className="text-center text-gray-400 font-semibold py-3 px-4">P</th>
-                            <th className="text-center text-gray-400 font-semibold py-3 px-4">W</th>
-                            <th className="text-center text-gray-400 font-semibold py-3 px-4">D</th>
-                            <th className="text-center text-gray-400 font-semibold py-3 px-4">L</th>
-                            <th className="text-center text-gray-400 font-semibold py-3 px-4">GF</th>
-                            <th className="text-center text-gray-400 font-semibold py-3 px-4">GA</th>
-                            <th className="text-center text-gray-400 font-semibold py-3 px-4">GD</th>
-                            <th className="text-center text-gray-400 font-semibold py-3 px-4">PTS</th>
+                            <th className="text-left text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm">Pos</th>
+                            <th className="text-left text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm">Team</th>
+                            <th className="text-center text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm">P</th>
+                            <th className="text-center text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm hidden sm:table-cell">W</th>
+                            <th className="text-center text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm hidden sm:table-cell">D</th>
+                            <th className="text-center text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm hidden sm:table-cell">L</th>
+                            <th className="text-center text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm hidden md:table-cell">GF</th>
+                            <th className="text-center text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm hidden md:table-cell">GA</th>
+                            <th className="text-center text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm hidden md:table-cell">GD</th>
+                            <th className="text-center text-gray-400 font-semibold py-3 px-2 sm:px-4 text-xs sm:text-sm">PTS</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -589,22 +623,22 @@ export default function TournamentTabs({
                             transition={{ delay: entry.position * 0.1 }}
                             className="border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors"
                           >
-                            <td className="py-4 px-4">
-                              <span className={`font-bold ${entry.position === 1 ? 'text-yellow-500' : 'text-white'}`}>
+                            <td className="py-3 px-2 sm:py-4 sm:px-4">
+                              <span className={`font-bold text-xs sm:text-sm ${entry.position === 1 ? 'text-yellow-500' : 'text-white'}`}>
                                 {entry.position}
                               </span>
                             </td>
-                            <td className="py-4 px-4">
+                            <td className="py-3 px-2 sm:py-4 sm:px-4">
                               <TeamChip name={entry.team.name} initials={entry.team.initials} size="sm" />
                             </td>
-                            <td className="text-center text-white py-4 px-4">{entry.played}</td>
-                            <td className="text-center text-white py-4 px-4">{entry.won}</td>
-                            <td className="text-center text-white py-4 px-4">{entry.drawn}</td>
-                            <td className="text-center text-white py-4 px-4">{entry.lost}</td>
-                            <td className="text-center text-white py-4 px-4">{(entry as any).goals_for || '-'}</td>
-                            <td className="text-center text-white py-4 px-4">{(entry as any).goals_against || '-'}</td>
-                            <td className="text-center text-white py-4 px-4">{(entry as any).goal_difference || '-'}</td>
-                            <td className="text-center font-bold text-yellow-500 py-4 px-4">{entry.points}</td>
+                            <td className="text-center text-white py-3 px-2 sm:py-4 sm:px-4 text-xs sm:text-sm">{entry.played}</td>
+                            <td className="text-center text-white py-3 px-2 sm:py-4 sm:px-4 text-xs sm:text-sm hidden sm:table-cell">{entry.won}</td>
+                            <td className="text-center text-white py-3 px-2 sm:py-4 sm:px-4 text-xs sm:text-sm hidden sm:table-cell">{entry.drawn}</td>
+                            <td className="text-center text-white py-3 px-2 sm:py-4 sm:px-4 text-xs sm:text-sm hidden sm:table-cell">{entry.lost}</td>
+                            <td className="text-center text-white py-3 px-2 sm:py-4 sm:px-4 text-xs sm:text-sm hidden md:table-cell">{(entry as any).goals_for || '-'}</td>
+                            <td className="text-center text-white py-3 px-2 sm:py-4 sm:px-4 text-xs sm:text-sm hidden md:table-cell">{(entry as any).goals_against || '-'}</td>
+                            <td className="text-center text-white py-3 px-2 sm:py-4 sm:px-4 text-xs sm:text-sm hidden md:table-cell">{(entry as any).goal_difference || '-'}</td>
+                            <td className="text-center font-bold text-yellow-500 py-3 px-2 sm:py-4 sm:px-4 text-xs sm:text-sm">{entry.points}</td>
                           </motion.tr>
                           ))}
                         </tbody>
@@ -723,8 +757,7 @@ export default function TournamentTabs({
               {activeStatTab === "clean-sheets" && (
                 <div className="bg-zinc-800/30 border border-zinc-700 rounded-lg p-6">
                   <div className="text-center py-12">
-                    <p className="text-gray-400 text-lg">Clean sheets data will be available after matches are played.</p>
-                    <p className="text-gray-500 text-sm mt-2">Only goalkeepers are credited with clean sheets.</p>
+                    <p className="text-gray-400 text-lg">Coming in the next tournament</p>
                   </div>
                 </div>
               )}
@@ -823,7 +856,7 @@ export default function TournamentTabs({
                 <h3 className="text-2xl font-bold text-white mb-4">Tournament Awards</h3>
                 <p className="text-gray-400 mb-6">View all tournament awards and winners</p>
                 <a
-                  href={tournament.slug ? `/t/${tournament.slug}/awards` : `/tournaments/${tournament.id}/awards`}
+                  href={tournament.slug ? `/tournaments/${tournament.slug}/awards` : `/tournaments/${tournament.id}/awards`}
                   className="inline-block bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-black font-bold px-6 py-3 rounded-lg transition-all"
                 >
                   View Awards Page

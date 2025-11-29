@@ -33,27 +33,30 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/leagues" element={<Leagues />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<SignUp />} />
-            <Route path="/manager/login" element={<ManagerLogin />} />
-            <Route path="/manager/signup" element={<ManagerSignUp />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/start-hosting" element={<ProtectedRoute><StartHosting /></ProtectedRoute>} />
-            <Route path="/host/new" element={<ProtectedRoute><TournamentWizard /></ProtectedRoute>} />
-            <Route path="/host/new/:id" element={<ProtectedRoute><TournamentWizard /></ProtectedRoute>} />
-            <Route path="/tournaments/:id" element={<TournamentDetail />} />
-            <Route path="/tournaments/:id/edit" element={<ProtectedRoute><EditTournament /></ProtectedRoute>} />
-                <Route path="/tournaments/:id/register" element={<RegisterTeam />} />
-                <Route path="/tournaments/:id/registration/success" element={<RegistrationSuccess />} />
-                <Route path="/tournaments/:id/fixtures" element={<Fixtures />} />
-                <Route path="/tournaments/:id/awards" element={<TournamentAwards />} />
-                <Route path="/teams/:id/add-players" element={<AddPlayers />} />
-                <Route path="/teams/:id" element={<TeamHub />} />
+            {/* Registration routes disabled in single organiser mode */}
+            {/* <Route path="/signup" element={<SignUp />} /> */}
+            {/* <Route path="/manager/login" element={<ManagerLogin />} /> */}
+            {/* <Route path="/manager/signup" element={<ManagerSignUp />} /> */}
+            <Route path="/dashboard" element={<ProtectedRoute requireOrganiser><Dashboard /></ProtectedRoute>} />
+            <Route path="/start-hosting" element={<ProtectedRoute requireOrganiser><StartHosting /></ProtectedRoute>} />
+            <Route path="/host/new" element={<ProtectedRoute requireOrganiser><TournamentWizard /></ProtectedRoute>} />
+            <Route path="/host/new/:id" element={<ProtectedRoute requireOrganiser><TournamentWizard /></ProtectedRoute>} />
+            <Route path="/tournaments/:slug" element={<TournamentDetail />} />
+            <Route path="/tournaments/:slug/edit" element={<ProtectedRoute requireOrganiser><EditTournament /></ProtectedRoute>} />
+                {/* Team registration routes - organiser only, handled in TournamentDetail */}
+                {/* <Route path="/tournaments/:slug/register" element={<RegisterTeam />} /> */}
+                {/* <Route path="/tournaments/:slug/registration/success" element={<RegistrationSuccess />} /> */}
+                <Route path="/tournaments/:slug/fixtures" element={<Fixtures />} />
+                <Route path="/tournaments/:slug/awards" element={<TournamentAwards />} />
+                <Route path="/teams/:slug/add-players" element={<AddPlayers />} />
+                <Route path="/teams/:slug" element={<TeamHub />} />
                 <Route path="/players/:id" element={<PlayerProfile />} />
                 <Route path="/t/:slug" element={<TournamentBySlug />} />
                 <Route path="/t/:slug/fixtures" element={<Fixtures />} />
                 <Route path="/t/:slug/awards" element={<TournamentAwards />} />
-                <Route path="/t/:slug/register" element={<RegisterTeam />} />
-                <Route path="/t/:slug/registration/success" element={<RegistrationSuccess />} />
+                {/* Team registration routes - organiser only */}
+                {/* <Route path="/t/:slug/register" element={<RegisterTeam />} /> */}
+                {/* <Route path="/t/:slug/registration/success" element={<RegistrationSuccess />} /> */}
                 <Route path="/registration/success" element={<RegistrationSuccess />} />
             <Route path="/venues" element={<Venues />} />
           </Routes>

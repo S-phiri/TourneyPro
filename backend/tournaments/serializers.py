@@ -1,7 +1,7 @@
 # tournaments/serializers.py
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.utils import timezone
 from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer, MatchScorer, MatchAssist
 
@@ -226,8 +226,8 @@ class MatchSerializer(serializers.ModelSerializer):
 class TeamInlineSerializer(serializers.Serializer):
     """Serializer for team data when creating a registration"""
     name = serializers.CharField(max_length=160)
-    manager_name = serializers.CharField(max_length=160)
-    manager_email = serializers.EmailField()
+    manager_name = serializers.CharField(max_length=160, required=False, allow_blank=True, allow_null=True)
+    manager_email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
     manager_password = serializers.CharField(write_only=True, required=False, allow_blank=True, min_length=8)
     phone = serializers.CharField(max_length=40, required=False, allow_blank=True)
 
@@ -256,7 +256,7 @@ class RegistrationCreateSerializer(serializers.Serializer):
     
     def validate(self, attrs):
         tournament_id = attrs['tournament_id']
-        manager_email = attrs['team']['manager_email']
+        manager_email = attrs['team'].get('manager_email', '').strip() if attrs['team'].get('manager_email') else ''
         request = self.context.get('request')
         
         try:
@@ -270,7 +270,8 @@ class RegistrationCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Tournament is full.")
         
         # NEW: If user is authenticated, check by manager_user first (more reliable)
-        if request and request.user.is_authenticated:
+        # BUT: Skip this check for organisers (is_staff=True) - they can add multiple teams
+        if request and request.user.is_authenticated and not request.user.is_staff:
             existing_by_user = Registration.objects.filter(
                 tournament_id=tournament_id,
                 team__manager_user=request.user
@@ -280,13 +281,16 @@ class RegistrationCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError("You have already registered a team for this tournament.")
         
         # Also check if email is already registered for this tournament (backward compatibility)
-        existing_by_email = Registration.objects.filter(
-            tournament_id=tournament_id,
-            team__manager_email=manager_email
-        ).exists()
-        
-        if existing_by_email:
-            raise serializers.ValidationError("A team with this email is already registered for this tournament.")
+        # Only check if email is provided
+        # Skip this check for organisers - they're managing teams, not registering themselves
+        if manager_email and (not request or not request.user.is_authenticated or not request.user.is_staff):
+            existing_by_email = Registration.objects.filter(
+                tournament_id=tournament_id,
+                team__manager_email=manager_email
+            ).exists()
+            
+            if existing_by_email:
+                raise serializers.ValidationError("A team with this email is already registered for this tournament.")
         
         return attrs
     
@@ -299,12 +303,13 @@ class RegistrationCreateSerializer(serializers.Serializer):
         team_data = validated_data['team']
         request = self.context.get('request')
         
-        manager_email = team_data['manager_email']
-        manager_name = team_data['manager_name']
+        manager_email = team_data.get('manager_email', '').strip() if team_data.get('manager_email') else ''
+        manager_name = team_data.get('manager_name', '').strip() if team_data.get('manager_name') else ''
         
-        # Prepare team defaults
+        # Prepare team defaults - ensure empty strings become None for nullable fields
         team_defaults = {
-            'manager_name': manager_name,
+            'manager_name': manager_name if manager_name and manager_name.strip() else None,
+            'manager_email': manager_email if manager_email and manager_email.strip() else None,
             'phone': team_data.get('phone', '')
         }
         
@@ -318,8 +323,8 @@ class RegistrationCreateSerializer(serializers.Serializer):
         if request and request.user.is_authenticated:
             manager_user = request.user
             team_defaults['manager_user'] = manager_user
-        else:
-            # User is not authenticated - create or find user account
+        elif manager_email:
+            # User is not authenticated but email provided - create or find user account
             # Try to find existing user by email
             try:
                 manager_user = User.objects.get(email=manager_email)
@@ -346,8 +351,8 @@ class RegistrationCreateSerializer(serializers.Serializer):
                     username=username,
                     email=manager_email,
                     password=manager_password,
-                    first_name=manager_name.split()[0] if manager_name.split() else '',
-                    last_name=' '.join(manager_name.split()[1:]) if len(manager_name.split()) > 1 else ''
+                    first_name=manager_name.split()[0] if manager_name and manager_name.split() else '',
+                    last_name=' '.join(manager_name.split()[1:]) if manager_name and len(manager_name.split()) > 1 else ''
                 )
                 
                 # Create user profile with manager role
@@ -366,31 +371,72 @@ class RegistrationCreateSerializer(serializers.Serializer):
             
             team_defaults['manager_user'] = manager_user
         
-        # Try to find existing team with same name and manager_email
-        team, created = Team.objects.get_or_create(
-            name=team_data['name'],
-            manager_email=manager_email,
-            defaults=team_defaults
-        )
+        # Try to find existing team with same name
+        # If manager_email is provided, use it in lookup; otherwise just use name
+        if manager_email:
+            team, created = Team.objects.get_or_create(
+                name=team_data['name'],
+                manager_email=manager_email,
+                defaults=team_defaults
+            )
+        else:
+            # No manager email - create team with just name (organizer-managed)
+            team, created = Team.objects.get_or_create(
+                name=team_data['name'],
+                manager_email__isnull=True,
+                defaults=team_defaults
+            )
+            # If multiple teams with same name and no email, get the first one
+            if not created:
+                team = Team.objects.filter(name=team_data['name'], manager_email__isnull=True).first()
+                if not team:
+                    team = Team.objects.create(name=team_data['name'], **team_defaults)
+                    created = True
         
         # Always update manager_user to the current user if they're registering
         # This ensures the person registering becomes the manager
         if not created:
             # If team exists, update it
-            team.manager_name = team_data['manager_name']
+            # Only update if values are provided (don't clear existing values with empty strings)
+            if manager_name is not None:
+                team.manager_name = manager_name.strip() if manager_name.strip() else None
+            if manager_email is not None:
+                team.manager_email = manager_email.strip() if manager_email.strip() else None
             if 'phone' in team_data:
                 team.phone = team_data['phone']
             # Update manager_user if not already set, or if it's the registering user
-            if not team.manager_user or (manager_user and team.manager_user_id != manager_user.id):
+            if manager_user and (not team.manager_user or team.manager_user_id != manager_user.id):
                 team.manager_user = manager_user
             team.save()
         
-        # Create registration
-        registration = Registration.objects.create(
+        # CRITICAL: Check if this team is already registered to this tournament
+        # This prevents IntegrityError when get_or_create reuses an existing team
+        existing_registration = Registration.objects.filter(
             tournament_id=tournament_id,
-            team=team,
-            status='pending'
-        )
+            team=team
+        ).exists()
+        
+        if existing_registration:
+            raise serializers.ValidationError({
+                'team': {'name': f'Team "{team.name}" is already registered for this tournament.'}
+            })
+        
+        # Create registration
+        try:
+            registration = Registration.objects.create(
+                tournament_id=tournament_id,
+                team=team,
+                status='pending'
+            )
+        except IntegrityError as e:
+            # Safety net: Handle race conditions or edge cases
+            if 'unique_team_per_tournament' in str(e) or 'UNIQUE constraint' in str(e):
+                raise serializers.ValidationError({
+                    'team': {'name': f'Team "{team.name}" is already registered for this tournament.'}
+                })
+            raise serializers.ValidationError({
+                'team': {'name': 'Failed to register team. Please try again.'}
+            })
         
         # NEW: Send registration confirmation email to manager
         try:

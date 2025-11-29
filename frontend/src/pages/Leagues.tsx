@@ -66,11 +66,13 @@ const Leagues: React.FC = () => {
     fetchTournaments();
   }, []);
 
-  const handleViewDetails = (tournamentId: number, slug?: string) => {
-    if (slug) {
-      navigate(`/t/${slug}`);
-    } else {
-      navigate(`/tournaments/${tournamentId}`);
+  const handleViewDetails = (tournament: Tournament) => {
+    // Use slug if available, fallback to ID for backwards compatibility
+    if (tournament.slug) {
+      navigate(`/tournaments/${tournament.slug}`);
+    } else if (tournament.id) {
+      // Fallback: if no slug exists, use ID (shouldn't happen with auto-generation)
+      navigate(`/tournaments/${tournament.id}`);
     }
   };
 
@@ -176,7 +178,7 @@ const Leagues: React.FC = () => {
               >
                 <TournamentCard
                   tournament={tournament}
-                  onClick={() => handleViewDetails(tournament.id, (tournament as any).slug)}
+                  onClick={() => handleViewDetails(tournament)}
                 />
               </motion.div>
             ))}

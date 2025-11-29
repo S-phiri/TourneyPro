@@ -6,76 +6,57 @@ from rest_framework.permissions import IsAuthenticated, AllowAny, IsAuthenticate
 from rest_framework.views import APIView
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
 from django.db import models
 from django.db.models import Q
 from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer, MatchScorer, MatchAssist, Referee, MatchReferee
 from .serializers import VenueSerializer, TournamentSerializer, TeamSerializer, RegistrationSerializer, MatchSerializer, UserSerializer, RegistrationCreateSerializer, PlayerSerializer, TeamPlayerSerializer
-from .permissions import IsOrganizerOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly, IsTeamManagerOrHost, IsTournamentOrganiser, IsTeamManagerOrReadOnly, IsMatchRefereeOrOrganizer
+from .permissions import IsOrganizerOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly, IsTeamManagerOrHost, IsTournamentOrganiser, IsTeamManagerOrReadOnly, IsMatchRefereeOrOrganizer, IsOrganiser
 from accounts.serializers import UserWithRoleSerializer
+
+
+class RestrictedTokenObtainPairView(TokenObtainPairView):
+    """
+    Custom JWT login view that restricts access to only Benson.
+    """
+    def post(self, request, *args, **kwargs):
+        username = request.data.get('username', '')
+        
+        # Only allow Benson to login
+        if username != 'Benson':
+            return Response(
+                {'detail': 'Access restricted. Only authorised users can login.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if user exists and is active
+        try:
+            user = User.objects.get(username=username)
+            if not user.is_active:
+                return Response(
+                    {'detail': 'Account is inactive.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        except User.DoesNotExist:
+            return Response(
+                {'detail': 'Invalid credentials.'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Proceed with normal JWT token generation
+        return super().post(request, *args, **kwargs)
 
 class RegisterView(APIView):
     """
-    User registration endpoint
+    User registration endpoint - DISABLED in single organiser mode
     """
     permission_classes = [AllowAny]
     
     def post(self, request):
-        username = request.data.get('username')
-        email = request.data.get('email')
-        password = request.data.get('password')
-        first_name = request.data.get('first_name')
-        last_name = request.data.get('last_name')
-        
-        if not all([username, email, password, first_name, last_name]):
-            return Response(
-                {'detail': 'All fields are required'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if User.objects.filter(username=username).exists():
-            return Response(
-                {'detail': 'Username already exists'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if User.objects.filter(email=email).exists():
-            return Response(
-                {'detail': 'Email already exists'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                password=password,
-                first_name=first_name,
-                last_name=last_name
-            )
-            
-            # Set role_hint to host for tournament organizers
-            from accounts.models import UserProfile
-            profile, _ = UserProfile.objects.get_or_create(user=user)
-            profile.role_hint = 'host'
-            profile.save()
-            
-            # Generate JWT tokens
-            refresh = RefreshToken.for_user(user)
-            
-            return Response({
-                'detail': 'User created successfully',
-                'user': UserSerializer(user).data,
-                'tokens': {
-                    'access': str(refresh.access_token),
-                    'refresh': str(refresh)
-                }
-            }, status=status.HTTP_201_CREATED)
-            
-        except Exception as e:
-            return Response(
-                {'detail': f'Error creating user: {str(e)}'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return Response(
+            {'detail': 'Registration is disabled. Please contact the organiser.'}, 
+            status=status.HTTP_403_FORBIDDEN
+        )
 
 class VenueViewSet(viewsets.ModelViewSet):
     queryset = Venue.objects.all()
@@ -90,18 +71,20 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         """Apply different permissions based on action"""
         # Public endpoints (no auth required)
-        public_actions = ['list', 'retrieve', 'register', 'standings', 'top_scorers', 'top_assists', 'role']
+        public_actions = ['list', 'retrieve', 'standings', 'top_scorers', 'top_assists', 'role', 'by_slug']
         # Handle both underscore and hyphen formats for action names
         action_name = self.action.replace('-', '_') if self.action else None
         
         if self.action in public_actions or action_name in public_actions:
             permission_classes = [AllowAny]
-        elif self.action in ['update', 'partial_update', 'destroy', 'generate_fixtures', 'publish']:
-            permission_classes = [IsAuthenticated, IsTournamentOrganiser]
+        elif self.action in ['update', 'partial_update', 'destroy', 'generate_fixtures', 'publish', 'register']:
+            permission_classes = [IsAuthenticated, IsOrganiser]
         elif self.action == 'create':
-            permission_classes = [IsAuthenticated]  # Any authenticated user can create
+            permission_classes = [IsAuthenticated, IsOrganiser]  # Only organiser can create
+        elif self.action in ['seed_test_teams', 'simulate_round', 'clear_fixtures', 'reset_tournament', 'reset_matches', 'remove_last_team', 'debug_knockout', 'validate_fixtures', 'generate_knockouts']:
+            permission_classes = [IsAuthenticated, IsOrganiser]
         else:
-            permission_classes = [IsAuthenticated]
+            permission_classes = [IsAuthenticated, IsOrganiser]
         return [permission() for permission in permission_classes]
     
     def perform_create(self, serializer):
@@ -169,6 +152,82 @@ class TournamentViewSet(viewsets.ModelViewSet):
             'third_place': get_tournament_third_place(tournament)
         })
     
+    @action(detail=True, methods=['get'], url_path='players-for-mvp', permission_classes=[IsAuthenticated, IsOrganiser])
+    def players_for_mvp(self, request, pk=None):
+        """Get all players in tournament for MVP selection (organiser only)"""
+        tournament = self.get_object()
+        
+        # Get all teams in tournament
+        team_ids = Team.objects.filter(
+            registrations__tournament=tournament,
+            registrations__status__in=['pending', 'paid']
+        ).values_list('id', flat=True)
+        
+        # Get all players in those teams with their stats
+        players_data = []
+        matches = Match.objects.filter(tournament=tournament, status='finished')
+        
+        for team_id in team_ids:
+            team_players = TeamPlayer.objects.filter(team_id=team_id).select_related('player', 'team')
+            for tp in team_players:
+                player = tp.player
+                goals = MatchScorer.objects.filter(match__in=matches, player=player).count()
+                assists = MatchAssist.objects.filter(match__in=matches, player=player).count()
+                appearances = player.appearances or 0
+                
+                players_data.append({
+                    'id': player.id,
+                    'first_name': player.first_name,
+                    'last_name': player.last_name,
+                    'full_name': f"{player.first_name} {player.last_name}".strip(),
+                    'team_id': tp.team.id,
+                    'team_name': tp.team.name,
+                    'goals': goals,
+                    'assists': assists,
+                    'appearances': appearances,
+                    'mvp_score': goals + assists
+                })
+        
+        # Sort by MVP score (goals + assists), then goals
+        players_data.sort(key=lambda x: (-x['mvp_score'], -x['goals']))
+        
+        return Response({'players': players_data})
+    
+    @action(detail=True, methods=['post'], url_path='set-mvp', permission_classes=[IsAuthenticated, IsOrganiser])
+    def set_mvp(self, request, pk=None):
+        """Set the MVP player for tournament (organiser only)"""
+        from .awards import get_mvp
+        tournament = self.get_object()
+        player_id = request.data.get('player_id')
+        
+        if not player_id:
+            return Response({'detail': 'player_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verify player is in tournament
+        team_ids = Team.objects.filter(
+            registrations__tournament=tournament,
+            registrations__status__in=['pending', 'paid']
+        ).values_list('id', flat=True)
+        
+        team_player = TeamPlayer.objects.filter(
+            player_id=player_id,
+            team_id__in=team_ids
+        ).first()
+        
+        if not team_player:
+            return Response({'detail': 'Player is not in this tournament'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Store MVP in tournament structure
+        structure = tournament.structure or {}
+        structure['selected_mvp_player_id'] = player_id
+        tournament.structure = structure
+        tournament.save(update_fields=['structure'])
+        
+        return Response({
+            'detail': 'MVP selected successfully',
+            'mvp': get_mvp(tournament)
+        })
+    
     @action(detail=True, methods=['get'], url_path='standings')
     def standings(self, request, pk=None):
         """Get tournament standings calculated from matches"""
@@ -218,11 +277,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
         standings = []
         for team in teams:
             # Get matches for this team in this tournament
-            team_matches = matches.filter(
-                models.Q(home_team=team) | models.Q(away_team=team)
-            )
+            team_matches = [m for m in matches if m.home_team == team or m.away_team == team]
             
-            played = team_matches.count()
+            played = len(team_matches)
             wins = 0
             draws = 0
             losses = 0
@@ -415,12 +472,79 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     match.save()
                     created_matches.append(match)
                 
-                return Response({
-                    'detail': f'Successfully generated {len(created_matches)} fixtures',
+                # Validate fixture completeness after generation and FIX immediately if incomplete
+                validation_warnings = []
+                matches_regenerated = 0
+                if tournament.format == 'combination':
+                    structure = tournament.structure or {}
+                    combination_type = structure.get('combination_type', 'combinationA')
+                    if combination_type == 'combinationB':
+                        from .tournament_formats import generate_groups, validate_round_robin_completeness, generate_round_robin_for_group
+                        from datetime import datetime
+                        
+                        groups = generate_groups(list(Team.objects.filter(
+                            registrations__tournament=tournament,
+                            registrations__status__in=['pending', 'paid']
+                        ).distinct()), 'combinationB')
+                        
+                        # Re-fetch matches after generation
+                        all_existing_matches = list(Match.objects.filter(tournament=tournament))
+                        
+                        for group in groups:
+                            group_name = group['name']
+                            group_teams = group['teams']
+                            validation_result = validate_round_robin_completeness(group_teams, all_existing_matches, group_name)
+                            
+                            if not validation_result.get('valid', False):
+                                # DELETE ALL matches for this group and regenerate from scratch
+                                deleted_count = Match.objects.filter(
+                                    tournament=tournament,
+                                    pitch__startswith=group_name
+                                ).count()
+                                Match.objects.filter(
+                                    tournament=tournament,
+                                    pitch__startswith=group_name
+                                ).delete()
+                                
+                                # Regenerate all matches for this group
+                                start_date = datetime.now()
+                                group_matches = generate_round_robin_for_group(
+                                    group_teams,
+                                    tournament,
+                                    group_name,
+                                    start_date,
+                                    start_round=1
+                                )
+                                
+                                # Save new matches
+                                for round_num, match_obj in group_matches:
+                                    match_obj.save()
+                                    created_matches.append(match_obj)
+                                    matches_regenerated += 1
+                                
+                                # Update all_existing_matches list
+                                all_existing_matches = list(Match.objects.filter(tournament=tournament))
+                                
+                                # Re-validate
+                                validation_result = validate_round_robin_completeness(group_teams, all_existing_matches, group_name)
+                                if not validation_result.get('valid', False):
+                                    validation_warnings.append(f"{group_name}: Still incomplete after regeneration")
+                                else:
+                                    print(f"  ✓ Fixed {group_name}: Deleted {deleted_count} incomplete matches, created {len(group_matches)} new matches")
+                
+                response_data = {
+                    'detail': f'Successfully generated {len(created_matches)} fixtures' + (f' (fixed {matches_regenerated} matches)' if matches_regenerated > 0 else ''),
                     'tournament_id': tournament.id,
                     'format': tournament.format,
-                    'matches_created': len(created_matches)
-                }, status=status.HTTP_200_OK)
+                    'matches_created': len(created_matches),
+                    'matches_regenerated': matches_regenerated
+                }
+                
+                if validation_warnings:
+                    response_data['validation_warnings'] = validation_warnings
+                    response_data['warning_message'] = 'Fixtures generated but some validation issues may remain. Use "Fix Fixtures" button to repair.'
+                
+                return Response(response_data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
                 {'detail': f'Error generating fixtures: {str(e)}'},
@@ -658,11 +782,334 @@ class TournamentViewSet(viewsets.ModelViewSet):
         # Delete all matches (MatchScorer and MatchAssist will be deleted via CASCADE)
         deleted_count = Match.objects.filter(tournament=tournament).delete()[0]
         
+        # Clear selected MVP (since fixtures are being cleared)
+        if tournament.structure and 'selected_mvp_player_id' in tournament.structure:
+            tournament.structure.pop('selected_mvp_player_id')
+            tournament.save(update_fields=['structure'])
+        
         return Response({
             'detail': f'Successfully deleted {deleted_count} matches',
             'matches_deleted': deleted_count,
             'tournament_id': tournament.id
         }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='reset-matches', permission_classes=[IsAuthenticated, IsOrganiser])
+    def reset_matches(self, request, pk=None):
+        """Reset all match results (scores, status) back to start, keeping teams and players.
+        Deletes knockout matches, resets group matches."""
+        from django.db import transaction
+        
+        tournament = self.get_object()
+        
+        # Check permission
+        if not request.user.is_authenticated or not request.user.is_staff:
+            return Response(
+                {'detail': 'Only organisers can reset matches'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        with transaction.atomic():
+            # Get all matches for this tournament
+            all_matches = Match.objects.filter(tournament=tournament)
+            
+            # Separate group matches from knockout matches
+            group_matches = []
+            knockout_matches = []
+            
+            for match in all_matches:
+                is_knockout = False
+                if tournament.format == 'knockout':
+                    # All matches in knockout format are knockout matches
+                    is_knockout = True
+                elif tournament.format == 'combination':
+                    # In combination format, knockout matches don't have 'Group' in pitch
+                    if match.pitch and 'Group' not in match.pitch:
+                        is_knockout = True
+                
+                if is_knockout:
+                    knockout_matches.append(match)
+                else:
+                    group_matches.append(match)
+            
+            # Delete all knockout matches (and their related data will cascade)
+            knockout_matches_deleted = len(knockout_matches)
+            for match in knockout_matches:
+                # Delete scorers and assists first (they have FKs to match)
+                MatchScorer.objects.filter(match=match).delete()
+                MatchAssist.objects.filter(goal__match=match).delete()
+                match.delete()
+            
+            # Reset group match scores, penalties, and status
+            matches_reset = 0
+            for match in group_matches:
+                match.home_score = 0
+                match.away_score = 0
+                match.home_penalties = None
+                match.away_penalties = None
+                match.status = 'scheduled'
+                match.save()
+                matches_reset += 1
+            
+            # Delete all remaining match scorers and assists for group matches (should be empty but be safe)
+            MatchScorer.objects.filter(match__tournament=tournament).delete()
+            MatchAssist.objects.filter(goal__match__tournament=tournament).delete()
+            
+            # Reset tournament status to 'open' if it was completed
+            if tournament.status == 'completed':
+                tournament.status = 'open'
+                tournament.save(update_fields=['status'])
+            
+            # Reset team stats (wins, draws, losses, goals_for, goals_against)
+            team_ids = tournament.registrations.filter(
+                status__in=['pending', 'paid']
+            ).values_list('team_id', flat=True)
+            
+            Team.objects.filter(id__in=team_ids).update(
+                wins=0,
+                draws=0,
+                losses=0,
+                goals_for=0,
+                goals_against=0
+            )
+            
+            # Reset player stats (goals, assists, appearances, clean_sheets)
+            Player.objects.filter(
+                memberships__team_id__in=team_ids
+            ).update(
+                goals=0,
+                assists=0,
+                appearances=0,
+                clean_sheets=0
+            )
+            
+            # Clear selected MVP (since tournament is being reset)
+            if tournament.structure and 'selected_mvp_player_id' in tournament.structure:
+                tournament.structure.pop('selected_mvp_player_id')
+                tournament.save(update_fields=['structure'])
+        
+        return Response({
+            'detail': f'Successfully reset {matches_reset} group matches and deleted {knockout_matches_deleted} knockout matches',
+            'matches_reset': matches_reset,
+            'knockout_matches_deleted': knockout_matches_deleted,
+            'tournament_id': tournament.id,
+            'tournament_status': tournament.status
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='fix-fixtures', permission_classes=[IsAuthenticated, IsOrganiser])
+    def fix_fixtures(self, request, pk=None):
+        """
+        Fix incomplete fixtures by regenerating matches for groups that don't have all required matches.
+        This will delete incomplete matches and regenerate them properly.
+        """
+        from django.db import transaction
+        from .tournament_formats import generate_groups, validate_round_robin_completeness, generate_round_robin_for_group
+        from datetime import datetime
+        
+        tournament = self.get_object()
+        
+        if tournament.format != 'combination':
+            return Response({
+                'detail': 'Fixture fixing is only available for combination format tournaments',
+                'skipped': True
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        structure = tournament.structure or {}
+        combination_type = structure.get('combination_type', 'combinationA')
+        if combination_type != 'combinationB':
+            return Response({
+                'detail': 'Fixture fixing is only available for combinationB (Groups → Knockout) format',
+                'skipped': True
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        teams = list(Team.objects.filter(
+            registrations__tournament=tournament,
+            registrations__status__in=['pending', 'paid']
+        ).distinct())
+        
+        if len(teams) < 2:
+            return Response({
+                'detail': 'Need at least 2 teams to fix fixtures',
+                'skipped': True
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        groups = generate_groups(teams, 'combinationB')
+        
+        fixed_groups = []
+        matches_deleted = 0
+        matches_created = 0
+        
+        with transaction.atomic():
+            for group in groups:
+                group_name = group['name']
+                group_teams = group['teams']
+                
+                # Get existing matches for this group
+                existing_matches = Match.objects.filter(
+                    tournament=tournament,
+                    pitch__startswith=group_name
+                )
+                
+                # Validate completeness
+                existing_matches_list = list(existing_matches)
+                validation_result = validate_round_robin_completeness(group_teams, existing_matches_list, group_name)
+                
+                if not validation_result.get('valid', False):
+                    # Delete all existing matches for this group
+                    count = existing_matches.count()
+                    existing_matches.delete()
+                    matches_deleted += count
+                    
+                    # Regenerate all matches for this group
+                    start_date = datetime.now()
+                    group_matches = generate_round_robin_for_group(
+                        group_teams,
+                        tournament,
+                        group_name,
+                        start_date,
+                        start_round=1
+                    )
+                    
+                    # Save new matches
+                    for round_num, match_obj in group_matches:
+                        match_obj.save()
+                        matches_created += 1
+                    
+                    fixed_groups.append({
+                        'group': group_name,
+                        'matches_deleted': count,
+                        'matches_created': len(group_matches)
+                    })
+        
+        if not fixed_groups:
+            return Response({
+                'detail': 'All groups already have complete fixtures. No fixes needed.',
+                'fixed_groups': [],
+                'matches_deleted': 0,
+                'matches_created': 0
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            'detail': f'Fixed {len(fixed_groups)} group(s). Deleted {matches_deleted} incomplete matches, created {matches_created} new matches.',
+            'fixed_groups': fixed_groups,
+            'matches_deleted': matches_deleted,
+            'matches_created': matches_created
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'], url_path='validate-fixtures', permission_classes=[IsAuthenticated, IsOrganiser])
+    def validate_fixtures(self, request, pk=None):
+        """Validate that all teams have equal number of scheduled matches (for round-robin groups)"""
+        from .tournament_formats import generate_groups, validate_round_robin_completeness
+        
+        tournament = self.get_object()
+        
+        # Only validate combinationB format (Groups → Knockout)
+        if tournament.format != 'combination':
+            return Response({
+                'valid': True,
+                'message': 'Fixture validation is only available for combination format tournaments',
+                'validation_skipped': True
+            })
+        
+        structure = tournament.structure or {}
+        combination_type = structure.get('combination_type', 'combinationA')
+        if combination_type != 'combinationB':
+            return Response({
+                'valid': True,
+                'message': 'Fixture validation is only available for combinationB (Groups → Knockout) format',
+                'validation_skipped': True
+            })
+        
+        # Get all teams and matches
+        teams = list(Team.objects.filter(
+            registrations__tournament=tournament,
+            registrations__status__in=['pending', 'paid']
+        ).distinct())
+        
+        all_matches = list(Match.objects.filter(tournament=tournament))
+        
+        # Generate groups (same logic as fixture generation)
+        groups = generate_groups(teams, 'combinationB')
+        
+        # Validate each group
+        all_valid = True
+        group_validations = {}
+        
+        for group in groups:
+            group_name = group['name']
+            group_teams = group['teams']
+            validation_result = validate_round_robin_completeness(group_teams, all_matches, group_name)
+            group_validations[group_name] = validation_result
+            if not validation_result.get('valid', False):
+                all_valid = False
+        
+        return Response({
+            'valid': all_valid,
+            'groups': group_validations,
+            'message': 'All groups have complete fixtures' if all_valid else 'Some groups have incomplete fixtures'
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='generate-knockouts', permission_classes=[IsAuthenticated, IsOrganiser])
+    def generate_knockouts(self, request, pk=None):
+        """Manually generate knockout stage from group qualifiers (organiser only)"""
+        tournament = self.get_object()
+        
+        # Check permission
+        if not request.user.is_authenticated or not request.user.is_staff:
+            return Response(
+                {'detail': 'Only organisers can generate knockouts'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if tournament format supports this
+        if tournament.format != 'combination':
+            return Response(
+                {'detail': 'Knockout generation is only available for combination format tournaments'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        structure = tournament.structure or {}
+        combination_type = structure.get('combination_type', 'combinationA')
+        if combination_type != 'combinationB':
+            return Response(
+                {'detail': 'Knockout generation is only available for combinationB (Groups → Knockout) format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if knockout stage already exists
+        from .models import Match
+        knockout_matches = Match.objects.filter(
+            tournament=tournament
+        ).exclude(pitch__icontains='Group')
+        
+        if knockout_matches.exists():
+            return Response({
+                'detail': 'Knockout stage already exists',
+                'already_generated': True,
+                'tournament_id': tournament.id
+            }, status=status.HTTP_200_OK)
+        
+        # Attempt to generate knockout stage
+        try:
+            from .simulation_helpers import generate_knockout_stage_from_groups
+            result = generate_knockout_stage_from_groups(tournament)
+            
+            if result:
+                return Response({
+                    'detail': 'Knockout stage generated successfully',
+                    'generated': True,
+                    'tournament_id': tournament.id
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'detail': 'Failed to generate knockout stage. Please ensure all group matches are finished and qualifiers can be determined.',
+                    'generated': False,
+                    'tournament_id': tournament.id
+                }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response(
+                {'detail': f'Error generating knockout stage: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=False, methods=['post'], url_path='referee-login', permission_classes=[AllowAny])
     def referee_login(self, request):
@@ -710,7 +1157,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
     
-    @action(detail=True, methods=['post'], url_path='register')
+    @action(detail=True, methods=['post'], url_path='register', permission_classes=[IsAuthenticated, IsOrganiser])
     def register(self, request, pk=None):
         """
         Register a team for this tournament.
@@ -739,12 +1186,33 @@ class TournamentViewSet(viewsets.ModelViewSet):
 class TeamViewSet(viewsets.ModelViewSet):
     queryset = Team.objects.all()
     serializer_class = TeamSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly, IsTeamManagerOrReadOnly]
+    
+    def get_permissions(self):
+        """Apply different permissions based on action"""
+        if self.action in ['list', 'retrieve', 'by_slug']:
+            permission_classes = [AllowAny]
+        else:
+            # Create, update, delete require organiser
+            permission_classes = [IsAuthenticated, IsOrganiser]
+        return [permission() for permission in permission_classes]
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+    
+    @action(detail=False, methods=['get'], url_path='by-slug/(?P<slug>[^/.]+)', permission_classes=[AllowAny])
+    def by_slug(self, request, slug=None):
+        """Get team by slug (public endpoint)"""
+        try:
+            team = Team.objects.get(slug=slug)
+            serializer = self.get_serializer(team)
+            return Response(serializer.data)
+        except Team.DoesNotExist:
+            return Response(
+                {'detail': 'Team not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 class RegistrationViewSet(mixins.CreateModelMixin,
                           mixins.ListModelMixin,
@@ -754,7 +1222,15 @@ class RegistrationViewSet(mixins.CreateModelMixin,
                           viewsets.GenericViewSet):
     queryset = Registration.objects.select_related("tournament","team").all()
     serializer_class = RegistrationSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly]
+    
+    def get_permissions(self):
+        """Apply different permissions based on action"""
+        if self.action in ['list', 'retrieve', 'status']:
+            permission_classes = [AllowAny]
+        else:
+            # Create, update, delete require organiser
+            permission_classes = [IsAuthenticated, IsOrganiser]
+        return [permission() for permission in permission_classes]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -804,7 +1280,15 @@ class RegistrationViewSet(mixins.CreateModelMixin,
 class MatchViewSet(viewsets.ModelViewSet):
     queryset = Match.objects.select_related("tournament","home_team","away_team").prefetch_related("scorers__player", "scorers__assist__player", "assists__player").all()
     serializer_class = MatchSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly]
+    
+    def get_permissions(self):
+        """Apply different permissions based on action"""
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [AllowAny]
+        else:
+            # Create, update, delete require organiser
+            permission_classes = [IsAuthenticated, IsOrganiser]
+        return [permission() for permission in permission_classes]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -928,7 +1412,7 @@ class MatchViewSet(viewsets.ModelViewSet):
             'status': match.status
         })
 
-    @action(detail=True, methods=['post'], url_path='score', permission_classes=[IsMatchRefereeOrOrganizer])
+    @action(detail=True, methods=['post'], url_path='score', permission_classes=[IsAuthenticated, IsOrganiser])
     def set_score(self, request, pk=None):
         from django.db import transaction
         # MatchScorer and MatchAssist already imported at top of file
@@ -1121,9 +1605,20 @@ class MatchViewSet(viewsets.ModelViewSet):
         should_generate_next_round = False
         round_name_for_generation = None
         tournament_for_generation = None
+        should_check_group_qualifiers = False
         
         if match.status == 'finished':
             tournament_for_generation = match.tournament
+            
+            # Check if this is a group stage match in combinationB format
+            if (tournament_for_generation.format == 'combination' and 
+                match.pitch and 'Group' in match.pitch):
+                structure = tournament_for_generation.structure or {}
+                combination_type = structure.get('combination_type', 'combinationA')
+                if combination_type == 'combinationB':
+                    should_check_group_qualifiers = True
+            
+            # Check if this is a knockout match that should generate next round
             if (tournament_for_generation.format == 'knockout' or 
                 (tournament_for_generation.format == 'combination' and match.pitch and 'Group' not in match.pitch)):
                 if match.pitch:
@@ -1185,6 +1680,36 @@ class MatchViewSet(viewsets.ModelViewSet):
                 print(f"{'='*60}\n")
                 # Don't fail if next round generation fails, but log the error
         
+        # Auto-generate knockout stage from groups if qualifiers can be determined (AFTER transaction commits)
+        if should_check_group_qualifiers:
+            try:
+                from .simulation_helpers import can_determine_group_qualifiers, generate_knockout_stage_from_groups
+                match.refresh_from_db()
+                
+                print(f"\n{'='*60}")
+                print(f"SET_SCORE: Checking if group qualifiers can be determined")
+                print(f"  Match ID: {match.id}")
+                print(f"  Tournament: {tournament_for_generation.name} (ID: {tournament_for_generation.id})")
+                print(f"  Match Pitch: '{match.pitch}'")
+                print(f"{'='*60}\n")
+                
+                if can_determine_group_qualifiers(tournament_for_generation):
+                    print(f"All group matches finished. Auto-generating knockout stage...")
+                    knockout_generated = generate_knockout_stage_from_groups(tournament_for_generation)
+                    if knockout_generated:
+                        print(f"✓ SUCCESS: Knockout stage auto-generated")
+                        response_data['knockout_stage_generated'] = True
+                    else:
+                        print(f"Knockout stage generation returned False (may already exist)")
+                else:
+                    print(f"Group stage not yet complete. Cannot determine qualifiers yet.")
+            except Exception as e:
+                import traceback
+                print(f"\n{'='*60}")
+                print(f"✗ EXCEPTION generating knockout stage after score update: {str(e)}")
+                print(traceback.format_exc())
+                print(f"{'='*60}\n")
+        
         # Check if tournament should be marked as completed
         if match.status == 'finished':
             from .models import Match
@@ -1237,64 +1762,12 @@ class UserView(APIView):
 
 class RegisterManagerView(APIView):
     """
-    Register a new manager user
+    Register a new manager user - DISABLED in single organiser mode
     """
     permission_classes = [AllowAny]
     
     def post(self, request):
-        username = request.data.get('username')
-        email = request.data.get('email')
-        password = request.data.get('password')
-        first_name = request.data.get('first_name', '')
-        last_name = request.data.get('last_name', '')
-        
-        if not all([username, email, password]):
-            return Response(
-                {'detail': 'Username, email, and password are required'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if User.objects.filter(username=username).exists():
-            return Response(
-                {'detail': 'Username already exists'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if User.objects.filter(email=email).exists():
-            return Response(
-                {'detail': 'Email already exists'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                password=password,
-                first_name=first_name,
-                last_name=last_name
-            )
-            
-            # Set role_hint to manager
-            from accounts.models import UserProfile
-            profile, _ = UserProfile.objects.get_or_create(user=user)
-            profile.role_hint = 'manager'
-            profile.save()
-            
-            # Generate JWT tokens
-            refresh = RefreshToken.for_user(user)
-            
-            return Response({
-                'detail': 'Manager account created successfully',
-                'user': UserWithRoleSerializer(user).data,
-                'tokens': {
-                    'access': str(refresh.access_token),
-                    'refresh': str(refresh)
-                }
-            }, status=status.HTTP_201_CREATED)
-            
-        except Exception as e:
-            return Response(
-                {'detail': f'Error creating manager: {str(e)}'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return Response(
+            {'detail': 'Registration is disabled. Please contact the organiser.'}, 
+            status=status.HTTP_403_FORBIDDEN
+        )
