@@ -106,6 +106,10 @@ CORS_EXPOSE_HEADERS = ["content-type"]
 # Static files
 STATIC_URL = 'static/'
 
+# Static files
+STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # ← ADD THIS LINE
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Email Configuration
