@@ -1,27 +1,59 @@
+from datetime import timedelta
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 import os
+
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# NEW: Use environment variables with fallbacks for development
+
+def _parse_csv_env(name: str, default: str = '') -> list[str]:
+    raw = os.environ.get(name, default)
+    return [item.strip() for item in raw.split(',') if item.strip()]
+
+
+def get_database_config() -> dict:
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url:
+        parsed = urlparse(database_url)
+        return {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': parsed.path.lstrip('/'),
+            'USER': unquote(parsed.username or ''),
+            'PASSWORD': unquote(parsed.password or ''),
+            'HOST': parsed.hostname or '',
+            'PORT': str(parsed.port or 5432),
+            'OPTIONS': {'sslmode': 'require'},
+        }
+
+    db_name = os.environ.get('DB_NAME')
+    if db_name:
+        return {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': db_name,
+            'USER': os.environ.get('DB_USER', ''),
+            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+            'HOST': os.environ.get('DB_HOST', 'localhost'),
+            'PORT': os.environ.get('DB_PORT', '5432'),
+        }
+
+    return {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
+
+
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults')
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
-# NEW: Hosts
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+
 if DEBUG:
-    # During development: allow everything (local testing, phone testing)
-    ALLOWED_HOSTS = ["*"]
+    ALLOWED_HOSTS = _parse_csv_env('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 else:
-    # For production: also allow everything for the tournament day
-    # (you can lock it down next week if needed)
-    ALLOWED_HOSTS = ["*"]
+    ALLOWED_HOSTS = _parse_csv_env('ALLOWED_HOSTS')
 
-
-
-# Apps
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -29,21 +61,18 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-
-    # Third-party
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
-
-    # Local apps
     'accounts',
     'tournaments',
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',  # 👈 must come before CommonMiddleware
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # Add WhiteNoise for static files
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -71,49 +100,40 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
-# Database
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': get_database_config(),
 }
 
-# CORS setup so your React app can connect
-# Simplified for deployment - allow all origins for today
-CORS_ALLOW_ALL_ORIGINS = True
-
-# Allow cookies/credentials from the frontend if needed
-CORS_ALLOW_CREDENTIALS = True
-
-# CSRF trusted origins - simplified for today
-# In production, you may want to restrict this based on FRONTEND_URL env var
-frontend_url = os.environ.get('FRONTEND_URL', '')
-if frontend_url:
-    CSRF_TRUSTED_ORIGINS = [frontend_url]
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+    CSRF_TRUSTED_ORIGINS = _parse_csv_env(
+        'CSRF_TRUSTED_ORIGINS',
+        'http://localhost:5173,http://127.0.0.1:5173',
+    )
 else:
-    CSRF_TRUSTED_ORIGINS = []
+    CORS_ALLOW_ALL_ORIGINS = False
+    cors_origins = _parse_csv_env('CORS_ALLOWED_ORIGINS')
+    if not cors_origins:
+        cors_origins = _parse_csv_env('FRONTEND_URL')
+    CORS_ALLOWED_ORIGINS = cors_origins
+    CSRF_TRUSTED_ORIGINS = _parse_csv_env('CSRF_TRUSTED_ORIGINS') or cors_origins
 
-# Optional CORS header tuning
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
-    "accept",
-    "accept-language",
-    "content-type",
-    "authorization",
-    "x-csrftoken",
+    'accept',
+    'accept-language',
+    'content-type',
+    'authorization',
+    'x-csrftoken',
 ]
-CORS_EXPOSE_HEADERS = ["content-type"]
+CORS_EXPOSE_HEADERS = ['content-type']
 
-# Static files
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-
-# WhiteNoise configuration for serving static files in production
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Email Configuration
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
@@ -122,11 +142,14 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@tournament.com')
 
-# For development, use console backend
 if DEBUG and not os.environ.get('EMAIL_HOST_USER'):
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-# REST Framework Configuration
+if not DEBUG:
+    SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'False') == 'True'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -135,9 +158,6 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
 }
-
-# JWT Configuration
-from datetime import timedelta
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
@@ -164,4 +184,32 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
     'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
+}
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'tournaments': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+    },
 }
