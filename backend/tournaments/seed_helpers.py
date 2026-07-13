@@ -2,6 +2,8 @@
 Helper functions for seeding test data
 Can be used by management commands and API endpoints
 """
+import logging
+
 from django.contrib.auth.models import User
 from django.db import connection, transaction
 from django.db.utils import OperationalError
@@ -12,6 +14,9 @@ from tournaments.tournament_formats import generate_fixtures_for_tournament
 from accounts.models import UserProfile
 import random
 import time
+
+
+logger = logging.getLogger(__name__)
 
 
 def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0, simulate_games=False):
@@ -444,7 +449,7 @@ def seed_test_teams(tournament, num_teams=8, mark_paid=False, players_per_team=0
                     matches_simulated = 0
                 except Exception as e:
                     # Don't fail the whole operation if simulation fails
-                    print(f"Error generating/simulating fixtures: {e}")
+                    logger.debug(f"Error generating/simulating fixtures: {e}")
 
     return {
         'teams_created': len(created_teams),

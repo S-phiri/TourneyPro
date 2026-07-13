@@ -1,6 +1,8 @@
 """
 Helper functions for simulating tournament matches round by round
 """
+import logging
+
 from django.db import transaction
 from django.db.utils import OperationalError
 from django.utils import timezone
@@ -10,6 +12,9 @@ from collections import Counter
 import random
 import re
 import time
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_next_round_matches(tournament):
@@ -43,7 +48,7 @@ def get_next_round_matches(tournament):
         matches_without_pitch = []
         matches_without_round = []
         
-        print(f"  Processing {len(scheduled_matches)} scheduled matches for combinationB format...")
+        logger.debug(f"  Processing {len(scheduled_matches)} scheduled matches for combinationB format...")
         
         for match in scheduled_matches:
             # Parse pitch field: "Group A - Round 1" → round 1
@@ -88,11 +93,11 @@ def get_next_round_matches(tournament):
         
         # Log warnings for matches without proper pitch/round info
         if matches_without_pitch:
-            print(f"  Warning: {len(matches_without_pitch)} matches have no pitch field (using date fallback)")
+            logger.debug(f"  Warning: {len(matches_without_pitch)} matches have no pitch field (using date fallback)")
         if matches_without_round:
-            print(f"  Warning: {len(matches_without_round)} matches have pitch but no round number:")
+            logger.debug(f"  Warning: {len(matches_without_round)} matches have pitch but no round number:")
             for match_id, pitch in matches_without_round[:3]:  # Show first 3
-                print(f"    Match {match_id}: pitch='{pitch}'")
+                logger.debug(f"    Match {match_id}: pitch='{pitch}'")
         
         if not matches_by_round:
             return (None, [], False)
@@ -124,16 +129,16 @@ def get_next_round_matches(tournament):
             round_totals[round_num]['total'] = round_totals[round_num]['finished'] + round_totals[round_num]['scheduled']
         
         # Debug: Log all rounds found
-        print(f"  Debug: Rounds found in scheduled matches: {sorted(matches_by_round.keys())}")
+        logger.debug(f"  Debug: Rounds found in scheduled matches: {sorted(matches_by_round.keys())}")
         total_scheduled = 0
         for round_num in sorted(matches_by_round.keys()):
             matches_count = len(matches_by_round[round_num])
             finished_count = round_totals.get(round_num, {}).get('finished', 0)
             total_count = round_totals.get(round_num, {}).get('total', matches_count + finished_count)
             total_scheduled += matches_count
-            print(f"    Round {round_num}: {matches_count} scheduled, {finished_count} finished, {total_count} total expected")
+            logger.debug(f"    Round {round_num}: {matches_count} scheduled, {finished_count} finished, {total_count} total expected")
         
-        print(f"  Total scheduled matches: {total_scheduled} (out of {len(scheduled_matches)} total scheduled)")
+        logger.debug(f"  Total scheduled matches: {total_scheduled} (out of {len(scheduled_matches)} total scheduled)")
         
         # Find the earliest incomplete round (has scheduled matches)
         # A round is incomplete if it has scheduled matches
@@ -173,33 +178,33 @@ def get_next_round_matches(tournament):
         
         # Log detailed information about validation
         if invalid_rounds:
-            print(f"  Warning: Found {len(invalid_rounds)} matches from different rounds:")
+            logger.debug(f"  Warning: Found {len(invalid_rounds)} matches from different rounds:")
             for round_num, match_id, pitch in invalid_rounds[:5]:  # Show first 5
-                print(f"    Match {match_id}: Round {round_num} (pitch: '{pitch}')")
+                logger.debug(f"    Match {match_id}: Round {round_num} (pitch: '{pitch}')")
             if len(invalid_rounds) > 5:
-                print(f"    ... and {len(invalid_rounds) - 5} more")
-            print(f"  Filtering to Round {earliest_round} only.")
+                logger.debug(f"    ... and {len(invalid_rounds) - 5} more")
+            logger.debug(f"  Filtering to Round {earliest_round} only.")
         
         if matches_without_round:
-            print(f"  Warning: Found {len(matches_without_round)} matches without round numbers in pitch:")
+            logger.debug(f"  Warning: Found {len(matches_without_round)} matches without round numbers in pitch:")
             for match_id, pitch in matches_without_round[:5]:  # Show first 5
-                print(f"    Match {match_id}: pitch='{pitch}'")
+                logger.debug(f"    Match {match_id}: pitch='{pitch}'")
             if len(matches_without_round) > 5:
-                print(f"    ... and {len(matches_without_round) - 5} more")
-            print(f"  Including them as they may belong to Round {earliest_round}.")
+                logger.debug(f"    ... and {len(matches_without_round) - 5} more")
+            logger.debug(f"  Including them as they may belong to Round {earliest_round}.")
         
         original_count = len(round_matches)
         if not validated_matches:
             # If validation failed, log and use original matches (shouldn't happen)
-            print(f"  Error: Round validation filtered out all {original_count} matches for round {earliest_round}.")
-            print(f"  This suggests matches have incorrect round numbers in their pitch field.")
+            logger.debug(f"  Error: Round validation filtered out all {original_count} matches for round {earliest_round}.")
+            logger.debug(f"  This suggests matches have incorrect round numbers in their pitch field.")
             # Still use original matches but log the issue
             validated_matches = round_matches
         else:
             if len(validated_matches) < original_count:
-                print(f"  Filtered {original_count - len(validated_matches)} matches from wrong rounds. Using {len(validated_matches)} matches for Round {earliest_round}.")
+                logger.debug(f"  Filtered {original_count - len(validated_matches)} matches from wrong rounds. Using {len(validated_matches)} matches for Round {earliest_round}.")
             elif len(validated_matches) == original_count:
-                print(f"  All {len(validated_matches)} matches validated for Round {earliest_round}.")
+                logger.debug(f"  All {len(validated_matches)} matches validated for Round {earliest_round}.")
             round_matches = validated_matches
         
         # Use the actual round number from the matches
@@ -212,13 +217,13 @@ def get_next_round_matches(tournament):
                 is_league_stage = False
         
         # Log for debugging
-        print(f"\n{'='*60}")
-        print(f"get_next_round_matches: Tournament {tournament.id} - {tournament.name}")
-        print(f"  Format: {tournament.format} (combinationB: {is_combinationB})")
-        print(f"  Found Round {round_number} with {len(round_matches)} scheduled matches")
-        print(f"  Incomplete rounds found: {sorted(incomplete_rounds)}")
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"get_next_round_matches: Tournament {tournament.id} - {tournament.name}")
+        logger.debug(f"  Format: {tournament.format} (combinationB: {is_combinationB})")
+        logger.debug(f"  Found Round {round_number} with {len(round_matches)} scheduled matches")
+        logger.debug(f"  Incomplete rounds found: {sorted(incomplete_rounds)}")
         if round_number in round_totals:
-            print(f"  Round {round_number} totals: {round_totals[round_number]['finished']} finished, {round_totals[round_number]['scheduled']} scheduled, {round_totals[round_number]['total']} total")
+            logger.debug(f"  Round {round_number} totals: {round_totals[round_number]['finished']} finished, {round_totals[round_number]['scheduled']} scheduled, {round_totals[round_number]['total']} total")
         
         # Log match breakdown by group for this round
         if round_matches:
@@ -233,32 +238,32 @@ def get_next_round_matches(tournament):
                             matches_by_group[group_name] = []
                         matches_by_group[group_name].append(match)
             
-            print(f"  Matches in Round {round_number} by group:")
+            logger.debug(f"  Matches in Round {round_number} by group:")
             total_by_group = 0
             for group_name, group_matches in sorted(matches_by_group.items()):
-                print(f"    {group_name}: {len(group_matches)} matches")
+                logger.debug(f"    {group_name}: {len(group_matches)} matches")
                 total_by_group += len(group_matches)
             
             # Safety check: ensure all matches are accounted for
             if total_by_group != len(round_matches):
-                print(f"  WARNING: Match count mismatch! Group total: {total_by_group}, Round total: {len(round_matches)}")
-                print(f"  This suggests some matches don't have group names in their pitch field.")
+                logger.debug(f"  WARNING: Match count mismatch! Group total: {total_by_group}, Round total: {len(round_matches)}")
+                logger.debug(f"  This suggests some matches don't have group names in their pitch field.")
                 matches_without_group = []
                 for match in round_matches:
                     if not match.pitch or not re.search(r'Group\s+[A-Z]', match.pitch, re.IGNORECASE):
                         matches_without_group.append(match)
                 if matches_without_group:
-                    print(f"    Found {len(matches_without_group)} matches without group names:")
+                    logger.debug(f"    Found {len(matches_without_group)} matches without group names:")
                     for match in matches_without_group[:3]:
-                        print(f"      Match {match.id}: pitch='{match.pitch}'")
+                        logger.debug(f"      Match {match.id}: pitch='{match.pitch}'")
             
             # Note: It's normal for some groups to finish earlier than others
             # (e.g., 13 teams: Group A has 7 rounds, Group B has 5 rounds)
             # So rounds 6-7 will only have matches from Group A
             if len(matches_by_group) < 2 and round_number > 1:
-                print(f"  Note: Only {len(matches_by_group)} group(s) have matches in Round {round_number}")
-                print(f"  This is expected when groups have different numbers of rounds.")
-        print(f"{'='*60}\n")
+                logger.debug(f"  Note: Only {len(matches_by_group)} group(s) have matches in Round {round_number}")
+                logger.debug(f"  This is expected when groups have different numbers of rounds.")
+        logger.debug(f"{'='*60}\n")
         
         return (round_number, round_matches, is_league_stage)
     
@@ -352,14 +357,14 @@ def simulate_round(tournament):
                         first_match_round = match_round
                     elif match_round != first_match_round:
                         # Found matches from different rounds - filter to only first round
-                        print(f"  Warning: Found matches from different rounds! Filtering to Round {first_match_round} only.")
+                        logger.debug(f"  Warning: Found matches from different rounds! Filtering to Round {first_match_round} only.")
                         round_matches = [m for m in round_matches if 
                                        m.pitch and re.search(r'Round\s+(\d+)', m.pitch, re.IGNORECASE) and 
                                        int(re.search(r'Round\s+(\d+)', m.pitch, re.IGNORECASE).group(1)) == first_match_round]
                         break
         
         if first_match_round and first_match_round != round_number:
-            print(f"  Warning: Round number mismatch. Updating from {round_number} to {first_match_round}")
+            logger.debug(f"  Warning: Round number mismatch. Updating from {round_number} to {first_match_round}")
             round_number = first_match_round
     
     matches_simulated = 0
@@ -387,7 +392,7 @@ def simulate_round(tournament):
                     if attempt < max_retries - 1:
                         # Exponential backoff: 0.1s, 0.2s, 0.4s
                         wait_time = retry_delay * (2 ** attempt)
-                        print(f"  Database locked for match {match.id}, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
+                        logger.debug(f"  Database locked for match {match.id}, retrying in {wait_time}s... (attempt {attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -398,7 +403,7 @@ def simulate_round(tournament):
                             'away_team': match.away_team.name if match.away_team else 'Unknown',
                             'error': f"database is locked (failed after {max_retries} attempts): {str(e)}"
                         })
-                        print(f"  Failed to simulate match {match.id} after {max_retries} attempts: database is locked")
+                        logger.debug(f"  Failed to simulate match {match.id} after {max_retries} attempts: database is locked")
                 else:
                     # Other OperationalError - don't retry
                     failed_matches.append({
@@ -424,7 +429,7 @@ def simulate_round(tournament):
     # (standings are calculated on-demand from match results, no explicit update needed)
     # But we can log that standings should be recalculated
     if is_league_stage and matches_simulated > 0:
-        print(f"Standings updated: {matches_simulated} matches simulated in {stage_name} Round {round_number}")
+        logger.debug(f"Standings updated: {matches_simulated} matches simulated in {stage_name} Round {round_number}")
         # Standings are calculated dynamically from match results when requested
         # No explicit update needed - the standings endpoint calculates from current match data
     
@@ -448,16 +453,14 @@ def simulate_round(tournament):
             if not unfinished_groups.exists() and group_matches.exists():
                 # All group stage matches complete - generate knockout stage
                 try:
-                    print(f"All group stage matches complete. Generating knockout stage...")
+                    logger.debug(f"All group stage matches complete. Generating knockout stage...")
                     knockout_stage_started = generate_knockout_stage_from_groups(tournament)
                     if knockout_stage_started:
-                        print(f"Knockout stage generated successfully")
+                        logger.debug(f"Knockout stage generated successfully")
                     else:
-                        print(f"Knockout stage generation returned False (may already exist)")
+                        logger.debug(f"Knockout stage generation returned False (may already exist)")
                 except Exception as e:
-                    print(f"Error generating knockout stage: {str(e)}")
-                    import traceback
-                    print(traceback.format_exc())
+                    logger.exception("Error generating knockout stage: %s", e)
     
     # After simulating a knockout round, generate next round if applicable
     if not is_league_stage and matches_simulated > 0:
@@ -467,17 +470,15 @@ def simulate_round(tournament):
                 completed_round_name = round_matches[0].pitch
                 # Only generate next round if this is a knockout round (not group stage)
                 if completed_round_name and completed_round_name.strip() and 'Group' not in completed_round_name:
-                    print(f"Attempting to generate next round after: {completed_round_name}")
+                    logger.debug(f"Attempting to generate next round after: {completed_round_name}")
                     next_round_created = generate_next_knockout_round(tournament, completed_round_name)
                     if next_round_created:
-                        print(f"Successfully generated next round after {completed_round_name}")
+                        logger.debug(f"Successfully generated next round after {completed_round_name}")
                     else:
-                        print(f"Failed to generate next round after {completed_round_name} (may already exist or not enough winners)")
+                        logger.debug(f"Failed to generate next round after {completed_round_name} (may already exist or not enough winners)")
         except Exception as e:
             # Log error but don't fail the simulation
-            import traceback
-            print(f"Error generating next knockout round: {str(e)}")
-            print(traceback.format_exc())
+            logger.exception("Error generating next knockout round: %s", e)
     
     if failed_matches:
         error_details = '; '.join([f"{m['home_team']} vs {m['away_team']}: {m['error']}" for m in failed_matches[:3]])
@@ -530,16 +531,16 @@ def generate_next_knockout_round(tournament, completed_round_name):
     """
     # Validate inputs
     if not completed_round_name or not completed_round_name.strip():
-        print(f"Invalid round name: {completed_round_name}")
+        logger.debug(f"Invalid round name: {completed_round_name}")
         return False
     
-    print(f"\n{'='*60}")
-    print(f"=== Generating next round after: {completed_round_name} ===")
-    print(f"Tournament ID: {tournament.id}")
-    print(f"Tournament Name: {tournament.name}")
-    print(f"Tournament Format: {tournament.format}")
-    print(f"Completed Round Name: '{completed_round_name}'")
-    print(f"{'='*60}\n")
+    logger.debug(f"\n{'='*60}")
+    logger.debug(f"=== Generating next round after: {completed_round_name} ===")
+    logger.debug(f"Tournament ID: {tournament.id}")
+    logger.debug(f"Tournament Name: {tournament.name}")
+    logger.debug(f"Tournament Format: {tournament.format}")
+    logger.debug(f"Completed Round Name: '{completed_round_name}'")
+    logger.debug(f"{'='*60}\n")
     
     try:
         # Normalize round name for matching (strip whitespace, handle variations)
@@ -553,9 +554,9 @@ def generate_next_knockout_round(tournament, completed_round_name):
         
         # Debug: Log all knockout matches to see what we're working with
         all_knockout = Match.objects.filter(tournament=tournament).exclude(pitch__icontains='Group')
-        print(f"\nDEBUG: All knockout matches in tournament ({all_knockout.count()} total):")
+        logger.debug(f"\nDEBUG: All knockout matches in tournament ({all_knockout.count()} total):")
         for m in all_knockout[:20]:
-            print(f"  Match {m.id}: pitch='{m.pitch}', status={m.status}, home={m.home_team.name if m.home_team else 'None'}, away={m.away_team.name if m.away_team else 'None'}")
+            logger.debug(f"  Match {m.id}: pitch='{m.pitch}', status={m.status}, home={m.home_team.name if m.home_team else 'None'}, away={m.away_team.name if m.away_team else 'None'}")
         
         # Filter by round name (case-insensitive match)
         # Handle variations like "Quarter-Finals", "Quarter Finals", "Semi-Finals", "Semi Finals", etc.
@@ -566,22 +567,22 @@ def generate_next_knockout_round(tournament, completed_round_name):
         # Use exact match if available, otherwise use contains
         if matches_by_exact.exists():
             completed_round_matches = matches_by_exact
-            print(f"Using exact match for round name: '{normalized_round_name}' -> Found {matches_by_exact.count()} matches")
+            logger.debug(f"Using exact match for round name: '{normalized_round_name}' -> Found {matches_by_exact.count()} matches")
         else:
             completed_round_matches = matches_by_contains
-            print(f"Using contains match for round name: '{normalized_round_name}' -> Found {matches_by_contains.count()} matches")
+            logger.debug(f"Using contains match for round name: '{normalized_round_name}' -> Found {matches_by_contains.count()} matches")
             # Log what matches were found
             for m in matches_by_contains[:10]:
-                print(f"  Found match {m.id} with pitch: '{m.pitch}'")
+                logger.debug(f"  Found match {m.id} with pitch: '{m.pitch}'")
         
-        print(f"Total matches found for round '{completed_round_name}': {completed_round_matches.count()}")
+        logger.debug(f"Total matches found for round '{completed_round_name}': {completed_round_matches.count()}")
     except Exception as e:
-        print(f"Error filtering matches in generate_next_knockout_round: {str(e)}")
+        logger.debug(f"Error filtering matches in generate_next_knockout_round: {str(e)}")
         return False
     
     # Check if all matches in this round are finished
     if not completed_round_matches.exists():
-        print(f"No matches found for round: {completed_round_name}")
+        logger.debug(f"No matches found for round: {completed_round_name}")
         return False
     
     total_matches = completed_round_matches.count()
@@ -589,110 +590,106 @@ def generate_next_knockout_round(tournament, completed_round_name):
     unfinished = completed_round_matches.filter(status__in=['scheduled', 'live'])
     unfinished_count = unfinished.count()
     
-    print(f"Round {completed_round_name}: {finished_matches}/{total_matches} matches finished, {unfinished_count} unfinished")
+    logger.debug(f"Round {completed_round_name}: {finished_matches}/{total_matches} matches finished, {unfinished_count} unfinished")
     
     if unfinished.exists():
         # Not all matches finished yet, don't generate next round
-        print(f"Not all matches in {completed_round_name} are finished. Waiting for {unfinished_count} more match(es).")
+        logger.debug(f"Not all matches in {completed_round_name} are finished. Waiting for {unfinished_count} more match(es).")
         return False
     
     # Get winners from completed matches
     winners = []
     try:
-        print(f"Processing {completed_round_matches.count()} matches from round: {completed_round_name}")
+        logger.debug(f"Processing {completed_round_matches.count()} matches from round: {completed_round_name}")
         for match in completed_round_matches:
-            print(f"  Processing match {match.id}: {match.home_team.name if match.home_team else 'TBC'} vs {match.away_team.name if match.away_team else 'TBC'}")
-            print(f"    Status: {match.status}, Score: {match.home_score}-{match.away_score}, Penalties: {match.home_penalties}-{match.away_penalties}")
+            logger.debug(f"  Processing match {match.id}: {match.home_team.name if match.home_team else 'TBC'} vs {match.away_team.name if match.away_team else 'TBC'}")
+            logger.debug(f"    Status: {match.status}, Score: {match.home_score}-{match.away_score}, Penalties: {match.home_penalties}-{match.away_penalties}")
             
             if match.status == 'finished' and match.home_score is not None and match.away_score is not None:
                 if match.home_score > match.away_score:
                     if match.home_team:
                         winners.append(match.home_team)
-                        print(f"    ✓ Winner: {match.home_team.name} (beat {match.away_team.name if match.away_team else 'TBC'} {match.home_score}-{match.away_score})")
+                        logger.debug(f"    ✓ Winner: {match.home_team.name} (beat {match.away_team.name if match.away_team else 'TBC'} {match.home_score}-{match.away_score})")
                     else:
-                        print(f"    ✗ Warning: Match {match.id} has no home team")
+                        logger.debug(f"    ✗ Warning: Match {match.id} has no home team")
                 elif match.away_score > match.home_score:
                     if match.away_team:
                         winners.append(match.away_team)
-                        print(f"    ✓ Winner: {match.away_team.name} (beat {match.home_team.name if match.home_team else 'TBC'} {match.away_score}-{match.home_score})")
+                        logger.debug(f"    ✓ Winner: {match.away_team.name} (beat {match.home_team.name if match.home_team else 'TBC'} {match.away_score}-{match.home_score})")
                     else:
-                        print(f"    ✗ Warning: Match {match.id} has no away team")
+                        logger.debug(f"    ✗ Warning: Match {match.id} has no away team")
                 else:
                     # Draw - check penalties
-                    print(f"    Draw detected - checking penalties...")
+                    logger.debug(f"    Draw detected - checking penalties...")
                     if match.home_penalties is not None and match.away_penalties is not None:
                         if match.home_penalties > match.away_penalties:
                             if match.home_team:
                                 winners.append(match.home_team)
-                                print(f"    ✓ Winner: {match.home_team.name} (won on penalties {match.home_penalties}-{match.away_penalties})")
+                                logger.debug(f"    ✓ Winner: {match.home_team.name} (won on penalties {match.home_penalties}-{match.away_penalties})")
                             else:
-                                print(f"    ✗ Warning: Match {match.id} has no home team")
+                                logger.debug(f"    ✗ Warning: Match {match.id} has no home team")
                         elif match.away_penalties > match.home_penalties:
                             if match.away_team:
                                 winners.append(match.away_team)
-                                print(f"    ✓ Winner: {match.away_team.name} (won on penalties {match.away_penalties}-{match.home_penalties})")
+                                logger.debug(f"    ✓ Winner: {match.away_team.name} (won on penalties {match.away_penalties}-{match.home_penalties})")
                             else:
-                                print(f"    ✗ Warning: Match {match.id} has no away team")
+                                logger.debug(f"    ✗ Warning: Match {match.id} has no away team")
                         # If penalties are also tied (shouldn't happen, but handle gracefully)
                         else:
-                            print(f"    ✗ Warning: Match {match.id} ended in a draw with tied penalties ({match.home_penalties}-{match.away_penalties}). Skipping.")
+                            logger.debug(f"    ✗ Warning: Match {match.id} ended in a draw with tied penalties ({match.home_penalties}-{match.away_penalties}). Skipping.")
                     else:
                         # Draw without penalties - this shouldn't happen in knockout, but handle gracefully
-                        print(f"    ✗ Warning: Match {match.id} ended in a draw without penalties. Score: {match.home_score}-{match.away_score}. Skipping.")
+                        logger.debug(f"    ✗ Warning: Match {match.id} ended in a draw without penalties. Score: {match.home_score}-{match.away_score}. Skipping.")
             else:
-                print(f"    ✗ Match {match.id} is not finished or missing scores. Status: {match.status}, Home: {match.home_score}, Away: {match.away_score}")
-        print(f"Total winners extracted: {len(winners)}")
+                logger.debug(f"    ✗ Match {match.id} is not finished or missing scores. Status: {match.status}, Home: {match.home_score}, Away: {match.away_score}")
+        logger.debug(f"Total winners extracted: {len(winners)}")
         if len(winners) > 0:
-            print(f"Winners: {', '.join([w.name for w in winners])}")
+            logger.debug(f"Winners: {', '.join([w.name for w in winners])}")
         
         # Validation: Ensure all finished matches produced a winner
         finished_count = completed_round_matches.filter(status='finished').count()
         if len(winners) < finished_count:
-            print(f"⚠ Warning: Only {len(winners)} winners extracted from {finished_count} finished matches.")
-            print(f"  This means {finished_count - len(winners)} match(es) did not produce a winner.")
-            print(f"  This could be due to:")
-            print(f"    - Draws without penalties")
-            print(f"    - Tied penalties")
-            print(f"    - Missing teams")
+            logger.debug(f"⚠ Warning: Only {len(winners)} winners extracted from {finished_count} finished matches.")
+            logger.debug(f"  This means {finished_count - len(winners)} match(es) did not produce a winner.")
+            logger.debug(f"  This could be due to:")
+            logger.debug(f"    - Draws without penalties")
+            logger.debug(f"    - Tied penalties")
+            logger.debug(f"    - Missing teams")
         elif len(winners) == finished_count:
-            print(f"✓ Validation passed: All {finished_count} finished matches produced winners.")
+            logger.debug(f"✓ Validation passed: All {finished_count} finished matches produced winners.")
     except Exception as e:
-        print(f"Error extracting winners in generate_next_knockout_round: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
+        logger.exception("Error extracting winners in generate_next_knockout_round: %s", e)
         return False
     
     # Need at least 2 winners to create next round
     if len(winners) < 2:
-        print(f"✗ Not enough winners ({len(winners)}) to create next round. Need at least 2.")
+        logger.debug(f"✗ Not enough winners ({len(winners)}) to create next round. Need at least 2.")
         if len(winners) == 1:
-            print(f"  Only 1 winner found. This might be the final match - no next round needed.")
+            logger.debug(f"  Only 1 winner found. This might be the final match - no next round needed.")
         elif len(winners) == 0:
-            print(f"  No winners found. Check if matches are finished and have valid results.")
+            logger.debug(f"  No winners found. Check if matches are finished and have valid results.")
         return False
     
     # Determine next round name based on number of winners
     try:
         next_round_name = get_round_name(len(winners))
-        print(f"\n{'='*60}")
-        print(f"Determining next round name...")
-        print(f"  Number of winners: {len(winners)}")
-        print(f"  Next round name: '{next_round_name}'")
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"Determining next round name...")
+        logger.debug(f"  Number of winners: {len(winners)}")
+        logger.debug(f"  Next round name: '{next_round_name}'")
         if next_round_name.lower() == "final":
-            print(f"  ✓ This is the FINAL round!")
+            logger.debug(f"  ✓ This is the FINAL round!")
         elif len(winners) == 2 and next_round_name.lower() != "final":
-            print(f"  ⚠ WARNING: Expected 'Final' for 2 winners, but got '{next_round_name}'")
-        print(f"{'='*60}\n")
+            logger.debug(f"  ⚠ WARNING: Expected 'Final' for 2 winners, but got '{next_round_name}'")
+        logger.debug(f"{'='*60}\n")
     except Exception as e:
-        print(f"Error getting round name in generate_next_knockout_round: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
+        logger.exception("Error getting round name in generate_next_knockout_round: %s", e)
         return False
     
     # Check if next round already exists (case-insensitive match)
     try:
-        print(f"\n{'='*60}")
-        print(f"Checking if next round '{next_round_name}' already exists...")
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"Checking if next round '{next_round_name}' already exists...")
         
         # Use both exact and contains matching to be thorough
         existing_exact = Match.objects.filter(
@@ -711,86 +708,82 @@ def generate_next_knockout_round(tournament, completed_round_name):
         
         # Special logging for Final
         if next_round_name.lower() == "final":
-            print(f"  Special handling for Final round...")
+            logger.debug(f"  Special handling for Final round...")
             # Get ALL matches with pitch containing "final" (case-insensitive) for debugging
             all_final_matches = Match.objects.filter(
                 tournament=tournament
             ).exclude(pitch__icontains='Group').filter(
                 pitch__icontains='final'
             )
-            print(f"  All matches with pitch containing 'final' (case-insensitive): {all_final_matches.count()}")
+            logger.debug(f"  All matches with pitch containing 'final' (case-insensitive): {all_final_matches.count()}")
             for m in all_final_matches:
-                print(f"    Match {m.id}: pitch='{m.pitch}', status={m.status}, home={m.home_team.name if m.home_team else 'TBC'}, away={m.away_team.name if m.away_team else 'TBC'}")
+                logger.debug(f"    Match {m.id}: pitch='{m.pitch}', status={m.status}, home={m.home_team.name if m.home_team else 'TBC'}, away={m.away_team.name if m.away_team else 'TBC'}")
         
-        print(f"  Exact match count: {existing_count_exact}")
-        print(f"  Contains match count: {existing_count_contains}")
+        logger.debug(f"  Exact match count: {existing_count_exact}")
+        logger.debug(f"  Contains match count: {existing_count_contains}")
         
         if existing_count_exact > 0:
             # Next round already exists (exact match)
-            print(f"  ✗ Next round '{next_round_name}' already exists ({existing_count_exact} match(es) with exact match). Skipping creation.")
+            logger.debug(f"  ✗ Next round '{next_round_name}' already exists ({existing_count_exact} match(es) with exact match). Skipping creation.")
             # Log the existing matches for debugging
             for m in existing_exact[:5]:
-                print(f"    Existing match {m.id}: {m.home_team.name if m.home_team else 'TBC'} vs {m.away_team.name if m.away_team else 'TBC'} (pitch: '{m.pitch}', status: {m.status})")
-            print(f"{'='*60}\n")
+                logger.debug(f"    Existing match {m.id}: {m.home_team.name if m.home_team else 'TBC'} vs {m.away_team.name if m.away_team else 'TBC'} (pitch: '{m.pitch}', status: {m.status})")
+            logger.debug(f"{'='*60}\n")
             return False
         elif existing_count_contains > 0:
             # Check if contains match is actually the same round (not a substring match)
             # For "Final", we want exact match only to avoid false positives
             if next_round_name.lower() == "final":
                 # For Final, be strict - only exact match
-                print(f"  ⚠ Next round '{next_round_name}' might exist ({existing_count_contains} match(es) with contains match). Checking...")
+                logger.debug(f"  ⚠ Next round '{next_round_name}' might exist ({existing_count_contains} match(es) with contains match). Checking...")
                 # Log the existing matches for debugging
                 for m in existing_contains[:5]:
-                    print(f"    Potential match {m.id}: {m.home_team.name if m.home_team else 'TBC'} vs {m.away_team.name if m.away_team else 'TBC'} (pitch: '{m.pitch}', status: {m.status})")
+                    logger.debug(f"    Potential match {m.id}: {m.home_team.name if m.home_team else 'TBC'} vs {m.away_team.name if m.away_team else 'TBC'} (pitch: '{m.pitch}', status: {m.status})")
                 # If any match has pitch exactly "Final" (case-insensitive), it exists
                 exact_final_found = any(m.pitch and m.pitch.strip().lower() == "final" for m in existing_contains)
                 if exact_final_found:
-                    print(f"  ✗ Next round '{next_round_name}' already exists (exact 'Final' found). Skipping creation.")
-                    print(f"{'='*60}\n")
+                    logger.debug(f"  ✗ Next round '{next_round_name}' already exists (exact 'Final' found). Skipping creation.")
+                    logger.debug(f"{'='*60}\n")
                     return False
                 else:
                     # Contains match but not exact - might be false positive, proceed with creation
-                    print(f"  ✓ Contains match found but not exact 'Final'. Proceeding with creation.")
+                    logger.debug(f"  ✓ Contains match found but not exact 'Final'. Proceeding with creation.")
             else:
                 # For other rounds, contains match is sufficient
-                print(f"  ✗ Next round '{next_round_name}' already exists ({existing_count_contains} match(es) with contains match). Skipping creation.")
+                logger.debug(f"  ✗ Next round '{next_round_name}' already exists ({existing_count_contains} match(es) with contains match). Skipping creation.")
                 for m in existing_contains[:5]:
-                    print(f"    Existing match {m.id}: {m.home_team.name if m.home_team else 'TBC'} vs {m.away_team.name if m.away_team else 'TBC'} (pitch: '{m.pitch}', status: {m.status})")
-                print(f"{'='*60}\n")
+                    logger.debug(f"    Existing match {m.id}: {m.home_team.name if m.home_team else 'TBC'} vs {m.away_team.name if m.away_team else 'TBC'} (pitch: '{m.pitch}', status: {m.status})")
+                logger.debug(f"{'='*60}\n")
                 return False
         else:
-            print(f"  ✓ Next round '{next_round_name}' does not exist. Proceeding with creation.")
-            print(f"{'='*60}\n")
+            logger.debug(f"  ✓ Next round '{next_round_name}' does not exist. Proceeding with creation.")
+            logger.debug(f"{'='*60}\n")
     except Exception as e:
-        print(f"Error checking existing next round: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
+        logger.exception("Error checking existing next round: %s", e)
         return False
     
     # Calculate next round date (1 day after last match in completed round)
     try:
         last_match = completed_round_matches.order_by('-kickoff_at').first()
         if not last_match:
-            print(f"✗ Error: No last match found in completed round")
+            logger.debug(f"✗ Error: No last match found in completed round")
             return False
         if not last_match.kickoff_at:
-            print(f"✗ Error: Last match {last_match.id} has no kickoff_at")
+            logger.debug(f"✗ Error: Last match {last_match.id} has no kickoff_at")
             return False
         
         next_round_date = last_match.kickoff_at + timedelta(days=1)
-        print(f"Calculated next round date: {next_round_date} (1 day after {last_match.kickoff_at})")
+        logger.debug(f"Calculated next round date: {next_round_date} (1 day after {last_match.kickoff_at})")
     except Exception as e:
-        print(f"✗ Error calculating next round date: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
+        logger.exception("Error calculating next round date: %s", e)
         return False
     
     # Create matches for next round
     num_matches = len(winners) // 2
     matches_created = 0
     
-    print(f"\n=== Creating {num_matches} match(es) for {next_round_name} with {len(winners)} winners ===")
-    print(f"Next round date: {next_round_date}")
+    logger.debug(f"\n=== Creating {num_matches} match(es) for {next_round_name} with {len(winners)} winners ===")
+    logger.debug(f"Next round date: {next_round_date}")
     
     try:
         for i in range(num_matches):
@@ -798,10 +791,10 @@ def generate_next_knockout_round(tournament, completed_round_name):
             away_team = winners[i * 2 + 1]
             
             if not home_team or not away_team:
-                print(f"✗ Warning: Skipping match {i+1} - missing team (home: {home_team}, away: {away_team})")
+                logger.debug(f"✗ Warning: Skipping match {i+1} - missing team (home: {home_team}, away: {away_team})")
                 continue
             
-            print(f"  Creating match {i+1}/{num_matches}: {home_team.name} vs {away_team.name}")
+            logger.debug(f"  Creating match {i+1}/{num_matches}: {home_team.name} vs {away_team.name}")
             match = Match.objects.create(
                 tournament=tournament,
                 home_team=home_team,
@@ -811,14 +804,12 @@ def generate_next_knockout_round(tournament, completed_round_name):
                 pitch=next_round_name
             )
             matches_created += 1
-            print(f"  ✓ Created match {match.id}: {home_team.name} vs {away_team.name} in {next_round_name}")
+            logger.debug(f"  ✓ Created match {match.id}: {home_team.name} vs {away_team.name} in {next_round_name}")
     except Exception as e:
-        import traceback
-        print(f"✗ Error creating matches in generate_next_knockout_round: {str(e)}")
-        print(traceback.format_exc())
+        logger.exception("Error creating matches in generate_next_knockout_round: %s", e)
         return False
     
-    print(f"\n=== Successfully created {matches_created} match(es) for {next_round_name} ===")
+    logger.debug(f"\n=== Successfully created {matches_created} match(es) for {next_round_name} ===")
     return matches_created > 0
 
 
@@ -960,10 +951,10 @@ def generate_knockout_stage_from_groups(tournament):
     matches_created = 0
     num_qualifiers = len(group_qualifiers) * 2  # Total number of qualifying teams
     
-    print(f"\n=== Generating Knockout Stage ===")
-    print(f"Number of groups: {len(group_qualifiers)}")
-    print(f"Number of qualifiers: {num_qualifiers}")
-    print(f"Group names: {group_names}")
+    logger.debug(f"\n=== Generating Knockout Stage ===")
+    logger.debug(f"Number of groups: {len(group_qualifiers)}")
+    logger.debug(f"Number of qualifiers: {num_qualifiers}")
+    logger.debug(f"Group names: {group_names}")
     
     # Determine proper round name based on number of teams
     if num_qualifiers >= 16:
@@ -975,7 +966,7 @@ def generate_knockout_stage_from_groups(tournament):
     else:
         round_name = "Final"
     
-    print(f"Knockout round name: {round_name}")
+    logger.debug(f"Knockout round name: {round_name}")
     
     # Pair adjacent groups: A vs B, C vs D, etc.
     # For 2 groups: A 1st vs B 2nd, B 1st vs A 2nd (Semi-Finals)
@@ -990,9 +981,9 @@ def generate_knockout_stage_from_groups(tournament):
             group2_first = group_qualifiers[group2_name]['first']
             group2_second = group_qualifiers[group2_name]['second']
             
-            print(f"  Pairing {group1_name} vs {group2_name}:")
-            print(f"    Match 1: {group1_first.name} ({group1_name} 1st) vs {group2_second.name} ({group2_name} 2nd)")
-            print(f"    Match 2: {group2_first.name} ({group2_name} 1st) vs {group1_second.name} ({group1_name} 2nd)")
+            logger.debug(f"  Pairing {group1_name} vs {group2_name}:")
+            logger.debug(f"    Match 1: {group1_first.name} ({group1_name} 1st) vs {group2_second.name} ({group2_name} 2nd)")
+            logger.debug(f"    Match 2: {group2_first.name} ({group2_name} 1st) vs {group1_second.name} ({group1_name} 2nd)")
             
             # Group 1 1st vs Group 2 2nd
             match1 = Match.objects.create(
@@ -1004,7 +995,7 @@ def generate_knockout_stage_from_groups(tournament):
                 pitch=round_name
             )
             matches_created += 1
-            print(f"    ✓ Created match {match1.id}")
+            logger.debug(f"    ✓ Created match {match1.id}")
             
             # Group 2 1st vs Group 1 2nd
             match2 = Match.objects.create(
@@ -1016,17 +1007,17 @@ def generate_knockout_stage_from_groups(tournament):
                 pitch=round_name
             )
             matches_created += 1
-            print(f"    ✓ Created match {match2.id}")
+            logger.debug(f"    ✓ Created match {match2.id}")
     
     # If odd number of groups, handle the last group
     if len(group_names) % 2 == 1:
         last_group_name = group_names[-1]
-        print(f"  Warning: Odd number of groups ({len(group_names)}). Last group {last_group_name} not paired.")
+        logger.debug(f"  Warning: Odd number of groups ({len(group_names)}). Last group {last_group_name} not paired.")
         # Pair with previous group's second place (or create a bye)
         # For now, we'll pair it with the previous group's structure
         # This is a simplified approach - in real World Cup, groups are predetermined
     
-    print(f"=== Created {matches_created} knockout match(es) for {round_name} ===")
+    logger.debug(f"=== Created {matches_created} knockout match(es) for {round_name} ===")
     return matches_created > 0
 
 
@@ -1120,10 +1111,10 @@ def simulate_match(match):
         if match.tournament.status != 'completed':
             match.tournament.status = 'completed'
             match.tournament.save()
-            print(f"\n{'='*60}")
-            print(f"✓ Tournament '{match.tournament.name}' marked as COMPLETED")
-            print(f"  Final match finished")
-            print(f"{'='*60}\n")
+            logger.debug(f"\n{'='*60}")
+            logger.debug(f"✓ Tournament '{match.tournament.name}' marked as COMPLETED")
+            logger.debug(f"  Final match finished")
+            logger.debug(f"{'='*60}\n")
     
     # Create scorers and assisters
     home_scorers = []

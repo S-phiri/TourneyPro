@@ -1,9 +1,13 @@
 # tournaments/serializers.py
+import logging
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.db import transaction, IntegrityError
 from django.utils import timezone
 from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPlayer, MatchScorer, MatchAssist
+
+logger = logging.getLogger(__name__)
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -448,7 +452,7 @@ class RegistrationCreateSerializer(serializers.Serializer):
                 send_new_registration_notification(registration, tournament.organizer.email)
         except Exception as e:
             # Don't fail registration if email fails
-            print(f"Failed to send registration emails: {e}")
+            logger.warning(f"Failed to send registration emails: {e}")
         
         # Store tokens and user_created flag in registration for response
         registration._tokens = tokens

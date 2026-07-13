@@ -2,10 +2,13 @@
 NEW: Tournament format utilities for dynamic fixture generation
 Supports League, Knockout, and Combination formats without breaking existing models
 """
+import logging
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 from django.utils import timezone
 from .models import Tournament, Team, Match, Registration
+
+logger = logging.getLogger(__name__)
 
 
 def generate_groups(teams: List[Team], type: str = "combinationB") -> List[Dict]:
@@ -112,7 +115,7 @@ def generate_round_robin_for_group(group_teams: List[Team], tournament: Tourname
     expected_matches = (num_teams * (num_teams - 1)) // 2
     
     if len(existing_pairs) == expected_matches:
-        print(f"  ✓ {group_name}: All {expected_matches} matches already exist, skipping generation")
+        logger.debug(f"  ✓ {group_name}: All {expected_matches} matches already exist, skipping generation")
         # Return existing matches organized by round
         existing_list = list(existing_matches)
         # Group by round number extracted from pitch
@@ -196,9 +199,9 @@ def generate_round_robin_for_group(group_teams: List[Team], tournament: Tourname
     total_pairs = len(existing_pairs) + len(pairs_created)
     
     if total_pairs == expected_matches:
-        print(f"  ✓ {group_name}: {created_count} new matches created, total {total_pairs}/{expected_matches} matches")
+        logger.debug(f"  ✓ {group_name}: {created_count} new matches created, total {total_pairs}/{expected_matches} matches")
     else:
-        print(f"  WARNING: {group_name}: Created {created_count} matches, but total is {total_pairs}/{expected_matches}")
+        logger.debug(f"  WARNING: {group_name}: Created {created_count} matches, but total is {total_pairs}/{expected_matches}")
     
     return matches
 
@@ -430,10 +433,10 @@ def generate_combination_fixtures(
             group_round_info.append((group_name, group_size, rounds_needed))
         
         # Log group round information for debugging
-        print(f"  Group configuration for {len(teams)} teams:")
+        logger.debug(f"  Group configuration for {len(teams)} teams:")
         for group_name, group_size, rounds_needed in group_round_info:
-            print(f"    {group_name}: {group_size} teams → {rounds_needed} rounds")
-        print(f"  Maximum rounds needed: {max_rounds}")
+            logger.debug(f"    {group_name}: {group_size} teams → {rounds_needed} rounds")
+        logger.debug(f"  Maximum rounds needed: {max_rounds}")
         
         # Generate all round-robin matches for each group first
         all_group_matches = {}  # {group_name: [(round_num, match), ...]}
@@ -474,37 +477,37 @@ def generate_combination_fixtures(
                     group_name = group['name']
                     if any((r == round_num for r, m in all_group_matches.get(group_name, []))):
                         groups_in_round.append(group_name)
-                print(f"  Round {round_num}: {matches_in_this_round} matches from {len(groups_in_round)} groups ({', '.join(groups_in_round)})")
+                logger.debug(f"  Round {round_num}: {matches_in_this_round} matches from {len(groups_in_round)} groups ({', '.join(groups_in_round)})")
         
         # NOTE: Knockout matches are NOT generated here
         # They will be generated dynamically after group stage completes
         # This happens in simulation_helpers.py when group stage finishes
         
         # Validate round-robin completeness for each group
-        print(f"\n{'='*60}")
-        print(f"Validating round-robin fixture completeness...")
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"Validating round-robin fixture completeness...")
         for group in groups:
             group_name = group['name']
             group_teams = group['teams']
             validation_result = validate_round_robin_completeness(group_teams, matches, group_name)
             
             if validation_result['valid']:
-                print(f"  ✓ {group_name}: Valid - {validation_result['actual_matches']}/{validation_result['expected_matches']} matches, {validation_result['total_teams']} teams")
+                logger.debug(f"  ✓ {group_name}: Valid - {validation_result['actual_matches']}/{validation_result['expected_matches']} matches, {validation_result['total_teams']} teams")
             else:
-                print(f"  ✗ {group_name}: INVALID - {validation_result['actual_matches']}/{validation_result['expected_matches']} matches")
+                logger.debug(f"  ✗ {group_name}: INVALID - {validation_result['actual_matches']}/{validation_result['expected_matches']} matches")
                 for error in validation_result['errors']:
-                    print(f"    ERROR: {error}")
+                    logger.debug(f"    ERROR: {error}")
                 for warning in validation_result['warnings']:
-                    print(f"    WARNING: {warning}")
+                    logger.debug(f"    WARNING: {warning}")
             
             # Log matches per team
-            print(f"    Matches per team:")
+            logger.debug(f"    Matches per team:")
             for team in group_teams:
                 count = validation_result['matches_per_team'].get(team.id, 0)
                 expected = validation_result['expected_per_team']
                 status = "✓" if count == expected else "✗"
-                print(f"      {status} {team.name}: {count}/{expected}")
-        print(f"{'='*60}\n")
+                logger.debug(f"      {status} {team.name}: {count}/{expected}")
+        logger.debug(f"{'='*60}\n")
     
     return matches
 
@@ -588,8 +591,6 @@ def generate_fixtures_for_tournament(tournament: Tournament) -> List[Match]:
         return matches
     else:
         # Default to league (but log warning)
-        import logging
-        logger = logging.getLogger(__name__)
         logger.warning(f"Unknown tournament format '{tournament.format}', defaulting to league")
         matches = generate_league_fixtures(teams, tournament, start_date)
         # Auto-assign referees to matches

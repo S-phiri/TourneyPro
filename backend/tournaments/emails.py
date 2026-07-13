@@ -1,8 +1,12 @@
 # tournaments/emails.py
+import logging
 from django.core.mail import send_mail
 from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
+
+logger = logging.getLogger(__name__)
+
 
 def send_registration_confirmation(registration):
     """Send registration confirmation email to manager"""
@@ -42,7 +46,7 @@ Tournament Management Team
         )
         return True
     except Exception as e:
-        print(f"Failed to send registration email: {e}")
+        logger.warning(f"Failed to send registration email: {e}")
         return False
 
 def send_payment_confirmation(registration):
@@ -80,7 +84,7 @@ Tournament Management Team
         )
         return True
     except Exception as e:
-        print(f"Failed to send payment confirmation email: {e}")
+        logger.warning(f"Failed to send payment confirmation email: {e}")
         return False
 
 def send_new_registration_notification(registration, organizer_email):
@@ -119,6 +123,6 @@ Tournament Management System
         )
         return True
     except Exception as e:
-        print(f"Failed to send organizer notification: {e}")
+        logger.warning(f"Failed to send organizer notification: {e}")
         return False
 

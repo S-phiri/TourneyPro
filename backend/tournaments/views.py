@@ -1,4 +1,5 @@
 # tournaments/views.py
+import logging
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -13,6 +14,9 @@ from .models import Venue, Tournament, Team, Registration, Match, Player, TeamPl
 from .serializers import VenueSerializer, TournamentSerializer, TeamSerializer, RegistrationSerializer, MatchSerializer, UserSerializer, RegistrationCreateSerializer, PlayerSerializer, TeamPlayerSerializer
 from .permissions import IsOrganizerOrReadOnly, IsOrganizerOfRelatedTournamentOrReadOnly, IsTeamManagerOrHost, IsTournamentOrganiser, IsTeamManagerOrReadOnly, IsMatchRefereeOrOrganizer, IsOrganiser
 from accounts.serializers import UserWithRoleSerializer
+
+
+logger = logging.getLogger(__name__)
 
 
 class RestrictedTokenObtainPairView(TokenObtainPairView):
@@ -530,7 +534,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                                 if not validation_result.get('valid', False):
                                     validation_warnings.append(f"{group_name}: Still incomplete after regeneration")
                                 else:
-                                    print(f"  ✓ Fixed {group_name}: Deleted {deleted_count} incomplete matches, created {len(group_matches)} new matches")
+                                    logger.debug(f"  ✓ Fixed {group_name}: Deleted {deleted_count} incomplete matches, created {len(group_matches)} new matches")
                 
                 response_data = {
                     'detail': f'Successfully generated {len(created_matches)} fixtures' + (f' (fixed {matches_regenerated} matches)' if matches_regenerated > 0 else ''),
@@ -1268,7 +1272,7 @@ class RegistrationViewSet(mixins.CreateModelMixin,
             send_payment_confirmation(registration)
         except Exception as e:
             # Don't fail the request if email fails
-            print(f"Failed to send payment confirmation email: {e}")
+            logger.warning(f"Failed to send payment confirmation email: {e}")
         
         return Response({
             'detail': 'Registration marked as paid',
@@ -1404,7 +1408,7 @@ class MatchViewSet(viewsets.ModelViewSet):
                 try:
                     generate_next_knockout_round(tournament, match.pitch)
                 except Exception as e:
-                    print(f"Error generating next knockout round: {str(e)}")
+                    logger.debug(f"Error generating next knockout round: {str(e)}")
                     # Don't fail if next round generation fails
         
         return Response({
@@ -1635,30 +1639,30 @@ class MatchViewSet(viewsets.ModelViewSet):
                 # Refresh match from DB to ensure we have latest committed state
                 match.refresh_from_db()
                 
-                print(f"\n{'='*60}")
-                print(f"SET_SCORE: Attempting to generate next round after finishing match")
-                print(f"  Match ID: {match.id}")
-                print(f"  Tournament: {tournament_for_generation.name} (ID: {tournament_for_generation.id})")
-                print(f"  Tournament Format: {tournament_for_generation.format}")
-                print(f"  Match Pitch: '{match.pitch}'")
-                print(f"  Round Name for Generation: '{round_name_for_generation}'")
-                print(f"  Match Status (after refresh): {match.status}")
-                print(f"  Match Score: {match.home_score}-{match.away_score}")
-                print(f"  Match Penalties: {match.home_penalties}-{match.away_penalties}")
-                print(f"  Is Knockout: {is_knockout}")
-                print(f"{'='*60}\n")
+                logger.debug(f"\n{'='*60}")
+                logger.debug(f"SET_SCORE: Attempting to generate next round after finishing match")
+                logger.debug(f"  Match ID: {match.id}")
+                logger.debug(f"  Tournament: {tournament_for_generation.name} (ID: {tournament_for_generation.id})")
+                logger.debug(f"  Tournament Format: {tournament_for_generation.format}")
+                logger.debug(f"  Match Pitch: '{match.pitch}'")
+                logger.debug(f"  Round Name for Generation: '{round_name_for_generation}'")
+                logger.debug(f"  Match Status (after refresh): {match.status}")
+                logger.debug(f"  Match Score: {match.home_score}-{match.away_score}")
+                logger.debug(f"  Match Penalties: {match.home_penalties}-{match.away_penalties}")
+                logger.debug(f"  Is Knockout: {is_knockout}")
+                logger.debug(f"{'='*60}\n")
                 
                 result = generate_next_knockout_round(tournament_for_generation, round_name_for_generation)
                 if result:
-                    print(f"\n{'='*60}")
-                    print(f"✓ SUCCESS: Generated next round after '{round_name_for_generation}'")
-                    print(f"  Match ID: {match.id}, Tournament: {tournament_for_generation.name}")
-                    print(f"{'='*60}\n")
+                    logger.debug(f"\n{'='*60}")
+                    logger.debug(f"✓ SUCCESS: Generated next round after '{round_name_for_generation}'")
+                    logger.debug(f"  Match ID: {match.id}, Tournament: {tournament_for_generation.name}")
+                    logger.debug(f"{'='*60}\n")
                 else:
-                    print(f"\n{'='*60}")
-                    print(f"✗ FAILED: Next round generation returned False for '{round_name_for_generation}'")
-                    print(f"  Match ID: {match.id}, Tournament: {tournament_for_generation.name}")
-                    print(f"  Check the logs above for detailed reasons")
+                    logger.debug(f"\n{'='*60}")
+                    logger.debug(f"✗ FAILED: Next round generation returned False for '{round_name_for_generation}'")
+                    logger.debug(f"  Match ID: {match.id}, Tournament: {tournament_for_generation.name}")
+                    logger.debug(f"  Check the logs above for detailed reasons")
                     # Check if Final already exists when generation fails for Semi-Finals
                     if round_name_for_generation.lower() in ['semi-finals', 'semi finals', 'semifinals']:
                         from .models import Match
@@ -1667,17 +1671,16 @@ class MatchViewSet(viewsets.ModelViewSet):
                         ).exclude(pitch__icontains='Group').filter(
                             pitch__icontains='final'
                         )
-                        print(f"  DEBUG: Checking if Final already exists...")
-                        print(f"  Found {existing_final.count()} match(es) with pitch containing 'final':")
+                        logger.debug(f"  DEBUG: Checking if Final already exists...")
+                        logger.debug(f"  Found {existing_final.count()} match(es) with pitch containing 'final':")
                         for m in existing_final:
-                            print(f"    Match {m.id}: pitch='{m.pitch}', status={m.status}")
-                    print(f"{'='*60}\n")
+                            logger.debug(f"    Match {m.id}: pitch='{m.pitch}', status={m.status}")
+                    logger.debug(f"{'='*60}\n")
             except Exception as e:
-                import traceback
-                print(f"\n{'='*60}")
-                print(f"✗ EXCEPTION generating next knockout round after score update: {str(e)}")
-                print(traceback.format_exc())
-                print(f"{'='*60}\n")
+                logger.exception(
+                    "Exception generating next knockout round after score update: %s",
+                    e,
+                )
                 # Don't fail if next round generation fails, but log the error
         
         # Auto-generate knockout stage from groups if qualifiers can be determined (AFTER transaction commits)
@@ -1686,29 +1689,28 @@ class MatchViewSet(viewsets.ModelViewSet):
                 from .simulation_helpers import can_determine_group_qualifiers, generate_knockout_stage_from_groups
                 match.refresh_from_db()
                 
-                print(f"\n{'='*60}")
-                print(f"SET_SCORE: Checking if group qualifiers can be determined")
-                print(f"  Match ID: {match.id}")
-                print(f"  Tournament: {tournament_for_generation.name} (ID: {tournament_for_generation.id})")
-                print(f"  Match Pitch: '{match.pitch}'")
-                print(f"{'='*60}\n")
+                logger.debug(f"\n{'='*60}")
+                logger.debug(f"SET_SCORE: Checking if group qualifiers can be determined")
+                logger.debug(f"  Match ID: {match.id}")
+                logger.debug(f"  Tournament: {tournament_for_generation.name} (ID: {tournament_for_generation.id})")
+                logger.debug(f"  Match Pitch: '{match.pitch}'")
+                logger.debug(f"{'='*60}\n")
                 
                 if can_determine_group_qualifiers(tournament_for_generation):
-                    print(f"All group matches finished. Auto-generating knockout stage...")
+                    logger.debug(f"All group matches finished. Auto-generating knockout stage...")
                     knockout_generated = generate_knockout_stage_from_groups(tournament_for_generation)
                     if knockout_generated:
-                        print(f"✓ SUCCESS: Knockout stage auto-generated")
+                        logger.debug(f"✓ SUCCESS: Knockout stage auto-generated")
                         response_data['knockout_stage_generated'] = True
                     else:
-                        print(f"Knockout stage generation returned False (may already exist)")
+                        logger.debug(f"Knockout stage generation returned False (may already exist)")
                 else:
-                    print(f"Group stage not yet complete. Cannot determine qualifiers yet.")
+                    logger.debug(f"Group stage not yet complete. Cannot determine qualifiers yet.")
             except Exception as e:
-                import traceback
-                print(f"\n{'='*60}")
-                print(f"✗ EXCEPTION generating knockout stage after score update: {str(e)}")
-                print(traceback.format_exc())
-                print(f"{'='*60}\n")
+                logger.exception(
+                    "Exception generating knockout stage after score update: %s",
+                    e,
+                )
         
         # Check if tournament should be marked as completed
         if match.status == 'finished':
@@ -1722,10 +1724,10 @@ class MatchViewSet(viewsets.ModelViewSet):
                 if match.tournament.status != 'completed':
                     match.tournament.status = 'completed'
                     match.tournament.save()
-                    print(f"\n{'='*60}")
-                    print(f"✓ Tournament '{match.tournament.name}' marked as COMPLETED")
-                    print(f"  All {total_matches} matches finished")
-                    print(f"{'='*60}\n")
+                    logger.debug(f"\n{'='*60}")
+                    logger.debug(f"✓ Tournament '{match.tournament.name}' marked as COMPLETED")
+                    logger.debug(f"  All {total_matches} matches finished")
+                    logger.debug(f"{'='*60}\n")
         
         return Response(response_data)
 
