@@ -8,7 +8,7 @@
 - **Credentials:**
   - Username: `Phiri`
   - Email: `simba_phiri@outlook.com`
-  - Password: `Phiri@123`
+  - Password: see `python manage.py setup_benson` (change at deploy time; migration default should not be used in production)
 - **Action:** Will run automatically when Render executes `python manage.py migrate`
 
 ### B. Static Files with WhiteNoise ✅
@@ -43,7 +43,7 @@ pip install -r requirements.txt && python manage.py collectstatic --noinput && p
 Set these in **Render → Service → Environment**:
 
 ```env
-SECRET_KEY=django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults
+SECRET_KEY=<REDACTED — check Render dashboard Environment tab>
 DEBUG=False
 ```
 
@@ -67,7 +67,7 @@ DEBUG=False
    - Should see: JSON response with API status
    - Visit: `https://your-app.onrender.com/admin/`
    - Should see: Styled Django admin (not plain HTML)
-   - Login with: `Phiri` / `Phiri@123`
+   - Login with organiser credentials from `python manage.py setup_benson` (not the migration default password)
 
 ## ✅ What Works Now
 

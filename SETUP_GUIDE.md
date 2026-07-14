@@ -36,37 +36,9 @@ cd backend
 python manage.py setup_benson
 ```
 
-Or manually:
-```bash
-python manage.py shell
-```
-
-Then in the shell:
-```python
-from django.contrib.auth.models import User
-user, created = User.objects.get_or_create(
-    username='Benson',
-    defaults={
-        'email': 'benson@tournament.com',
-        'first_name': 'Benson',
-        'is_staff': True,
-        'is_superuser': True
-    }
-)
-if not created:
-    user.is_staff = True
-    user.is_superuser = True
-    user.save()
-user.set_password('benson123')
-user.save()
-print(f"User {'created' if created else 'updated'}: {user.username}")
-```
-
 ### Step 3: Test Login
 1. Go to `http://localhost:5173/login`
-2. Login with:
-   - Username: `Benson`
-   - Password: `benson123`
+2. Login with credentials from `python manage.py setup_benson`
 
 ### Step 4: Create Tournament
 1. After logging in, click "Start Hosting"

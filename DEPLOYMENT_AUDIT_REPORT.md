@@ -194,7 +194,7 @@ pip install -r requirements.txt && python manage.py collectstatic --noinput && p
 - **Credentials:**
   - Username: `Phiri`
   - Email: `simba_phiri@outlook.com`
-  - Password: `Phiri@123`
+  - Password: see `python manage.py setup_benson` (change at deploy time; do not use migration default in production)
 - **Features:**
   - Uses `make_password()` for proper hashing
   - Supports custom user models via `AUTH_USER_MODEL`
@@ -263,7 +263,7 @@ pip install -r requirements.txt && python manage.py collectstatic --noinput && p
 Set these in **Render → Service → Environment**:
 
 ```env
-SECRET_KEY=django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults
+SECRET_KEY=<REDACTED — check Render dashboard Environment tab>
 DEBUG=False
 FRONTEND_URL=https://your-frontend-url.com  # Optional, for CSRF
 ```

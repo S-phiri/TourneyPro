@@ -30,7 +30,7 @@
 Add these in **Render → Environment**:
 
 ```env
-SECRET_KEY=django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults
+SECRET_KEY=<REDACTED — set in Render dashboard; generate with: python manage.py shell -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())">
 DEBUG=False
 PYTHON_VERSION=3.12
 ```

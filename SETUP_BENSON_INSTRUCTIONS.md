@@ -63,7 +63,7 @@ You should see:
 
 Login credentials:
   Username: Benson
-  Password: benson123
+  Password: <see setup_benson command output — run: python manage.py setup_benson>
   is_staff: True
   is_superuser: True
 ```
@@ -95,7 +95,5 @@ Login credentials:
    npm run dev
    ```
 
-3. Go to `http://localhost:5173/login` and login with:
-   - Username: `Benson`
-   - Password: `benson123`
+3. Go to `http://localhost:5173/login` and login with credentials from `python manage.py setup_benson`
 

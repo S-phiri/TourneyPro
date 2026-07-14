@@ -46,7 +46,7 @@ def get_database_config() -> dict:
     }
 
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults')
+SECRET_KEY = os.environ.get('SECRET_KEY', '-p_f_4&3aqvz57mu@#c%grvpii^7vndag)vo30*#&%qgp7hy-2')
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
 if DEBUG:

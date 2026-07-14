@@ -1,57 +1,25 @@
-# Your Secret Key Information
+# Secret Key Information
 
-## Current Secret Key Location
+## Production (Render)
 
-Your secret key is currently set as a **fallback** in `backend/core/settings.py`:
+**Never commit a production `SECRET_KEY` to the repo.**
 
-```python
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults')
-```
+1. Generate a fresh key:
+   ```bash
+   cd backend
+   python manage.py shell -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+   ```
+2. Set it in **Render → tourneypro-5 → Environment** as `SECRET_KEY=<generated-value>`.
+3. Use **Generate Value** in Render if you prefer the dashboard to create one.
 
-## For Production Deployment
+The previously documented fallback key was exposed and has been rotated. Check the Render dashboard for the current value.
 
-### Option 1: Use the Current Fallback (Quick - for today)
-You can use the existing fallback key for Railway deployment:
+## Local development
 
-```
-SECRET_KEY=django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults
-```
+`backend/core/settings.py` uses a local-only fallback when `SECRET_KEY` is unset. For production-like local testing, set `SECRET_KEY` in `backend/.env` (see `backend/env.example`).
 
-### Option 2: Generate a New Secret Key (Recommended)
+## Current status
 
-Generate a new secret key using Django:
-
-```bash
-cd backend
-python manage.py shell -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-```
-
-Or use this Python one-liner:
-```python
-python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-```
-
-## For Railway Deployment
-
-Add this to Railway → Service → Variables:
-
-```
-SECRET_KEY=<paste-your-secret-key-here>
-DEBUG=False
-```
-
-## Current Status
-
-- ✅ No `.env` file exists (which is fine)
-- ✅ Secret key has a fallback in `settings.py`
-- ⚠️ For production, you should set `SECRET_KEY` as an environment variable in Railway
-
-## Quick Copy for Railway
-
-If you want to use the current fallback key (fine for today):
-
-```
-SECRET_KEY=django-insecure-5vtg5y*rze$8c)jqfm55_08&da#f__5q*wys(g^azmc^b-ults
-DEBUG=False
-```
-
+- No `backend/.env` should be committed (gitignored).
+- Production must set `SECRET_KEY` via Render environment variables.
+- `DEBUG=False` in production (set in Render).

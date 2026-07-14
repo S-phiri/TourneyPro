@@ -14,7 +14,7 @@ When this migration runs on Render, it will create a superuser with:
 
 - **Username:** `Phiri`
 - **Email:** `simba_phiri@outlook.com`
-- **Password:** `Phiri@123`
+- **Password:** see `python manage.py setup_benson` (change at deploy time; do not rely on migration default)
 - **Status:** Superuser + Staff (full admin access)
 
 ### How It Works
@@ -53,9 +53,7 @@ When you deploy to Render:
 1. Render automatically runs: `python manage.py migrate`
 2. This migration will execute
 3. Superuser "Phiri" will be created automatically
-4. You can then login to `/admin/` using:
-   - Username: `Phiri`
-   - Password: `Phiri@123`
+4. You can then login to `/admin/` using credentials from `python manage.py setup_benson` (not the migration default password)
 
 ### Security Note
 
