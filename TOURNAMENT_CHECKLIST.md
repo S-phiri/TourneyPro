@@ -111,6 +111,8 @@
 
 ## Deployment Checklist
 
+For Render production deploy steps, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
 ### Environment Setup
 - [ ] Backend dependencies installed (`pip install -r requirements.txt`)
 - [ ] Frontend dependencies installed (`npm install`)
